@@ -1,15 +1,25 @@
-PYTHON ?= python3
+.PHONY: api-test core-test verify api-dev db-up db-down web-test web-build
 
-.PHONY: db-up db-down api-test api-dev
+api-test:
+	PYTHONPATH=apps/api/src:packages/hydropilot-core/src:. pytest apps/api/tests -q
+
+core-test:
+	PYTHONPATH=packages/hydropilot-core/src pytest packages/hydropilot-core/tests -q
+
+verify: core-test api-test
+	python scripts/check_fixture.py data/demo/sacramento_v0_1.json
+
+api-dev:
+	cd apps/api && uvicorn hydropilot_api.main:app --reload --app-dir src
 
 db-up:
-	docker compose up -d db
+	docker compose up -d postgis
 
 db-down:
 	docker compose down
 
-api-test:
-	cd apps/api && $(PYTHON) -m pytest tests -v
+web-test:
+	cd apps/web && npm test -- --run
 
-api-dev:
-	cd apps/api && PYTHONPATH=src $(PYTHON) -m uvicorn hydropilot_api.main:app --reload --host 0.0.0.0 --port 8000
+web-build:
+	cd apps/web && npm run build
