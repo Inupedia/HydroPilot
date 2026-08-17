@@ -1,4 +1,13 @@
-.PHONY: api-test core-test verify api-dev db-up db-down web-test web-build
+.PHONY: setup dev dev-web api-test core-test verify api-dev db-up db-down web-test web-build
+
+setup:
+	python scripts/setup_dev.py
+
+dev:
+	npm run dev
+
+dev-web:
+	npm run dev:web
 
 api-test:
 	PYTHONPATH=apps/api/src:packages/hydropilot-core/src:. pytest apps/api/tests -q
