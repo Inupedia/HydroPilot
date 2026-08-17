@@ -6,6 +6,7 @@ import { dirname, extname, join, normalize, resolve, sep, delimiter } from 'node
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+const smokeMode = process.env.HYDROPILOT_DESKTOP_SMOKE === '1'
 let mainWindow
 let apiProcess
 let rendererServer
@@ -29,6 +30,8 @@ const mimeTypes = new Map([
   ['.woff2', 'font/woff2'],
 ])
 
+const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
+
 function repoRoot() {
   return resolve(__dirname, '../../..')
 }
@@ -51,10 +54,7 @@ function getFreePort() {
 }
 
 function startApi(port) {
-  const fixture = app.isPackaged
-    ? resourcePath('data', 'demo', 'sacramento_v0_1.json')
-    : resourcePath('data', 'demo', 'sacramento_v0_1.json')
-
+  const fixture = resourcePath('data', 'demo', 'sacramento_v0_1.json')
   const env = {
     ...process.env,
     HYDROPILOT_API_HOST: '127.0.0.1',
@@ -64,7 +64,6 @@ function startApi(port) {
 
   let command
   let args
-
   if (app.isPackaged) {
     command = resourcePath('api', process.platform === 'win32' ? 'hydropilot-api.exe' : 'hydropilot-api')
     args = []
@@ -82,7 +81,7 @@ function startApi(port) {
   apiProcess = spawn(command, args, {
     cwd: app.isPackaged ? process.resourcesPath : repoRoot(),
     env,
-    stdio: app.isPackaged ? 'ignore' : 'inherit',
+    stdio: smokeMode || !app.isPackaged ? 'inherit' : 'ignore',
     windowsHide: true,
   })
 
@@ -140,6 +139,7 @@ function safeStaticPath(root, pathname) {
 }
 
 async function startRendererServer() {
+  if (rendererServer && rendererPort) return
   const webRoot = app.isPackaged ? resourcePath('web') : resourcePath('apps', 'web', 'dist')
   if (!existsSync(join(webRoot, 'index.html'))) throw new Error(`Desktop renderer build is missing: ${webRoot}`)
 
@@ -173,6 +173,23 @@ async function startRendererServer() {
   })
 }
 
+async function verifyDesktopRuntime(timeoutMs = 30_000) {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    const state = await mainWindow.webContents.executeJavaScript(`(() => ({
+      viewer: Boolean(document.querySelector('.cesium-viewer canvas')),
+      objects: document.body.textContent?.includes('24 OBJECTS') ?? false,
+      hostHeight: document.querySelector('[data-testid="cesium-host"]')?.clientHeight ?? 0
+    }))()`)
+    if (state.viewer && state.objects && state.hostHeight > 500) {
+      console.log(`HYDROPILOT_DESKTOP_SMOKE_OK ${JSON.stringify(state)}`)
+      return
+    }
+    await sleep(500)
+  }
+  throw new Error('Packaged Electron runtime did not render the Cesium scene and 24 demo objects')
+}
+
 async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1520,
@@ -190,7 +207,7 @@ async function createWindow() {
     },
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow.show())
+  if (!smokeMode) mainWindow.once('ready-to-show', () => mainWindow.show())
   mainWindow.on('closed', () => { mainWindow = undefined })
 
   const devRenderer = process.env.HYDROPILOT_RENDERER_URL
@@ -199,6 +216,11 @@ async function createWindow() {
   } else {
     await startRendererServer()
     await mainWindow.loadURL(`http://127.0.0.1:${rendererPort}`)
+  }
+
+  if (smokeMode) {
+    await verifyDesktopRuntime()
+    app.quit()
   }
 }
 
@@ -212,6 +234,7 @@ async function boot() {
 function shutdown() {
   if (rendererServer) rendererServer.close()
   rendererServer = undefined
+  rendererPort = undefined
   if (apiProcess && !apiProcess.killed) apiProcess.kill()
   apiProcess = undefined
 }
@@ -221,6 +244,11 @@ app.whenReady().then(async () => {
     await boot()
   } catch (error) {
     console.error(error)
+    if (smokeMode) {
+      shutdown()
+      app.exit(2)
+      return
+    }
     dialog.showErrorBox('HydroPilot failed to start', error instanceof Error ? error.message : String(error))
     app.quit()
   }
