@@ -1,112 +1,127 @@
 # HydroPilot
 
-HydroPilot is a water-network digital twin demonstrator for flood-control and dispatch scenes.
+HydroPilot is an AI-oriented water-network digital-twin demonstrator for flood-control and dispatch scenes. It combines a FastAPI backend, deterministic hydro models, Vue 3 + Cesium, and an Electron desktop shell.
 
-V0.1 proves the foundation: public water-network data, directed topology, simple deterministic hydro models, APIs, and a Cesium map-first UI. V0.2 adds a self-contained Electron desktop runtime, GitHub Release installers, and a provider-neutral LLM boundary for the GIS copilot track.
+## Start here — run the whole application
+
+Do **not** start with `apps/web` alone unless you intentionally want frontend-only development. The Vue app depends on the HydroPilot API.
+
+From the repository root, run the one-time setup:
+
+```bash
+npm run setup
+```
+
+Then start the complete desktop development stack:
+
+```bash
+npm run dev
+```
+
+That single command starts:
+
+```text
+Electron
+├── local FastAPI backend (auto-started by Electron)
+├── Vue/Vite renderer
+└── Cesium water-network scene
+```
+
+If you prefer a normal browser instead of Electron, run:
+
+```bash
+npm run dev:web
+```
+
+That starts both services together:
+
+```text
+UI:       http://127.0.0.1:5173
+API:      http://127.0.0.1:8000
+API docs: http://127.0.0.1:8000/docs
+```
+
+Running only this command:
+
+```bash
+npm --prefix apps/web run dev
+```
+
+starts **only Vite** and therefore is not a complete HydroPilot runtime.
 
 ## What HydroPilot includes
 
 - Sacramento public-data-derived demo fixture.
-- `hydro_object` / `hydro_relation` domain model.
-- Directed downstream traversal over `FLOWS_TO` relations.
-- 0D reservoir mass balance.
-- 1D Muskingum river routing.
+- Directed `hydro_object` / `hydro_relation` water-network model.
+- Downstream traversal over `FLOWS_TO` relations.
+- 0D reservoir mass balance and 1D Muskingum routing.
 - FastAPI object, topology, release-scenario, and LLM APIs.
-- Vue 3 + Cesium water-network viewer.
-- Timeline-driven scenario state.
-- Electron desktop shell with local API sidecar management.
-- Desktop-local same-origin proxy so the renderer does not depend on a fixed API port.
-- Multi-provider LLM registry inspired by Cherry Studio's provider/adapter separation.
-- GitHub Actions quality gates, packaged Electron Cesium smoke testing, and tagged GitHub Releases.
+- Vue 3 + Cesium map-first interface and scenario timeline.
+- Electron desktop shell that owns the local FastAPI sidecar lifecycle.
+- Multi-provider LLM support: OpenAI, Anthropic, Gemini, DeepSeek, SiliconFlow, OpenRouter, Ollama, and custom OpenAI-compatible endpoints.
+- Electron `safeStorage` for desktop API keys.
+- GitHub Actions CI, Cesium visual acceptance, packaged desktop smoke tests, releases, and merged-branch cleanup.
 - Optional non-blocking SFINCS tiny regression adapter.
 
-## Web/API quickstart
+## Backend-only development
+
+If you intentionally want to work only on the API:
 
 ```bash
-make core-test
-make api-test
-make verify
 make api-dev
 ```
 
-API smoke:
+Then verify it:
 
 ```bash
-curl http://localhost:8000/health
-curl http://localhost:8000/api/network/reach-001/downstream?max_hops=4
-curl http://localhost:8000/api/llm/providers
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/network/reach-001/downstream?max_hops=4
+curl http://127.0.0.1:8000/api/llm/providers
 ```
 
-Web app:
+Interactive API documentation is available at:
 
-```bash
-cd apps/web
-npm install
-npm run dev
+```text
+http://127.0.0.1:8000/docs
 ```
 
 ## LLM providers
 
-HydroPilot separates a provider from its wire-protocol adapter. This lets multiple vendors share one tested adapter while native APIs keep their own request/response mapping.
+HydroPilot separates providers from wire-protocol adapters so compatible vendors can share tested implementations.
 
-| Provider | Adapter family | Default API key environment variable |
+| Provider | Adapter family | API key |
 | --- | --- | --- |
-| OpenAI | `openai-compatible` | `OPENAI_API_KEY` |
-| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` |
-| Google Gemini | `gemini` | `GEMINI_API_KEY` |
-| DeepSeek | `openai-compatible` | `DEEPSEEK_API_KEY` |
-| SiliconFlow | `openai-compatible` | `SILICONFLOW_API_KEY` |
-| OpenRouter | `openai-compatible` | `OPENROUTER_API_KEY` |
-| Ollama | `ollama` | none |
-| Custom OpenAI-compatible | `openai-compatible` | `HYDROPILOT_LLM_API_KEY` |
+| OpenAI | `openai-compatible` | required |
+| Anthropic | `anthropic` | required |
+| Google Gemini | `gemini` | required |
+| DeepSeek | `openai-compatible` | required |
+| SiliconFlow | `openai-compatible` | required |
+| OpenRouter | `openai-compatible` | required |
+| Ollama | `ollama` | none by default |
+| Custom OpenAI-compatible | `openai-compatible` | configurable |
 
-Example request:
+In the Electron app, configure provider/model/API key from the Copilot panel. Desktop secrets are stored through Electron `safeStorage`.
 
-```bash
-export SILICONFLOW_API_KEY='...'
+## Desktop runtime architecture
 
-curl http://localhost:8000/api/llm/chat \
-  -H 'content-type: application/json' \
-  -d '{
-    "provider": "siliconflow",
-    "model": "Pro/zai-org/GLM-4.7",
-    "messages": [
-      {"role": "system", "content": "You are the HydroPilot GIS copilot."},
-      {"role": "user", "content": "Summarize the current water-network scene."}
-    ]
-  }'
+```text
+HydroPilot Electron
+├── Electron main process
+│   ├── allocates an available loopback API port
+│   ├── starts/stops FastAPI automatically
+│   ├── exposes encrypted secret storage
+│   └── serves/proxies the renderer and /api
+├── Vue 3 renderer
+│   └── CesiumJS water-network digital twin
+├── hydropilot-api sidecar
+└── demo data
 ```
 
-`base_url` and `api_key` can also be supplied per request. The `custom-openai` provider requires an explicit `base_url` unless it is wrapped by a future desktop provider-settings store. API keys must not be committed to the repository.
+In source development Electron launches Python directly. In packaged releases FastAPI is compiled into a PyInstaller sidecar, so end users do not need Python installed.
 
-The current provider layer is intentionally small: OpenAI-compatible vendors reuse one adapter; Anthropic uses `/v1/messages`; Gemini uses native `generateContent`; Ollama uses `/api/chat`. Tool calling, streaming, model discovery, and encrypted desktop credential persistence can be layered on this boundary without changing GIS/business logic.
+## Build a desktop package
 
-## Electron desktop development
-
-Install the Python API dependencies once:
-
-```bash
-python -m pip install -e packages/hydropilot-core -e apps/api
-```
-
-Install frontend and desktop dependencies:
-
-```bash
-npm --prefix apps/web install
-npm --prefix apps/desktop install
-```
-
-Run the desktop application in development mode:
-
-```bash
-npm --prefix apps/desktop run dev
-```
-
-Electron starts and owns the local FastAPI process. The renderer remains Vue + Cesium; in development it uses the Vite dev server.
-
-## Build a self-contained desktop package
-
-The packaged application embeds a PyInstaller FastAPI sidecar, the Cesium/Vue production build, and the Sacramento demo fixture. Build the sidecar first:
+Build the API sidecar first:
 
 ```bash
 python -m pip install pyinstaller
@@ -120,41 +135,19 @@ python scripts/stage_desktop_api.py
 Then package Electron for the current OS:
 
 ```bash
-npm --prefix apps/web install
-npm --prefix apps/desktop install
 npm --prefix apps/desktop run dist
 ```
 
-Installers are written to `apps/desktop/release/`.
+Installers are written to `apps/desktop/release/`. GitHub Actions builds native macOS Apple Silicon, macOS Intel, Windows x64, and Linux x64 release assets.
 
-The `Desktop` GitHub Actions workflow supports packaged runtime acceptance and manual cross-platform packaging. Its Linux acceptance job launches the packaged Electron binary under Chromium/Xvfb and only passes after a real Cesium canvas and all 24 demo objects are visible.
-
-## GitHub Releases
-
-A version tag now represents a desktop release. Push a tag such as:
+## Tests
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+make verify
+npm test
 ```
 
-The `Release` workflow builds the FastAPI sidecar and Electron installers independently on macOS, Windows, and Linux, then creates a GitHub Release and attaches the generated `.dmg` / `.zip`, `.exe` / `.zip`, and `.AppImage` / `.tar.gz` assets. The Electron package version is derived from the tag, so later `v0.x.y` releases do not require a manual version edit before packaging.
-
-## Desktop runtime architecture
-
-```text
-HydroPilot Electron
-├── Electron main process
-│   ├── allocates an available loopback API port
-│   ├── starts/stops the packaged FastAPI sidecar
-│   └── serves the renderer and proxies /api to FastAPI
-├── Vue 3 renderer
-│   └── CesiumJS water-network digital twin
-├── packaged hydropilot-api executable
-└── packaged demo data
-```
-
-The packaged renderer is served from an Electron-owned loopback HTTP server rather than `file://`. This preserves normal Cesium asset loading and gives the renderer a same-origin `/api` path without exposing a hard-coded service port.
+The repository also runs CI, real-browser Cesium visual acceptance, and packaged Electron smoke acceptance in GitHub Actions.
 
 ## Data policy
 
@@ -162,4 +155,4 @@ Only small, reviewable demo fixtures are committed. Raw public datasets, model o
 
 ## Safety and scope
 
-HydroPilot remains a demonstrator. It is not operational flood-control, reservoir-dispatch, emergency warning, or engineering-design decision support.
+HydroPilot remains a demonstrator. It is not operational flood-control, reservoir-dispatch, emergency-warning, or engineering-design decision support.
