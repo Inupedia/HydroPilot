@@ -1,6 +1,6 @@
-import { app, BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, safeStorage } from 'electron'
 import { spawn } from 'node:child_process'
-import { createReadStream, existsSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, get as httpGet, request as httpRequest } from 'node:http'
 import { dirname, extname, join, normalize, resolve, sep, delimiter } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,6 +38,58 @@ function repoRoot() {
 
 function resourcePath(...parts) {
   return app.isPackaged ? join(process.resourcesPath, ...parts) : join(repoRoot(), ...parts)
+}
+
+function secretStorePath() {
+  return join(app.getPath('userData'), 'llm-secrets.json')
+}
+
+function validateSecretName(name) {
+  if (typeof name !== 'string' || !/^llm:[a-z0-9._-]+$/i.test(name)) {
+    throw new Error('Invalid secret name')
+  }
+}
+
+function readSecretStore() {
+  const path = secretStorePath()
+  if (!existsSync(path)) return {}
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function writeSecretStore(store) {
+  const path = secretStorePath()
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, JSON.stringify(store), { encoding: 'utf8', mode: 0o600 })
+}
+
+function registerSecretHandlers() {
+  ipcMain.handle('hydropilot:secret:get', async (_event, name) => {
+    validateSecretName(name)
+    const encrypted = readSecretStore()[name]
+    if (!encrypted) return null
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS-backed credential encryption is unavailable')
+    return safeStorage.decryptString(Buffer.from(encrypted, 'base64'))
+  })
+
+  ipcMain.handle('hydropilot:secret:set', async (_event, name, value) => {
+    validateSecretName(name)
+    if (typeof value !== 'string' || !value.trim()) throw new Error('Secret value is required')
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS-backed credential encryption is unavailable')
+    const store = readSecretStore()
+    store[name] = safeStorage.encryptString(value.trim()).toString('base64')
+    writeSecretStore(store)
+  })
+
+  ipcMain.handle('hydropilot:secret:remove', async (_event, name) => {
+    validateSecretName(name)
+    const store = readSecretStore()
+    delete store[name]
+    writeSecretStore(store)
+  })
 }
 
 function getFreePort() {
@@ -179,15 +231,16 @@ async function verifyDesktopRuntime(timeoutMs = 30_000) {
     const state = await mainWindow.webContents.executeJavaScript(`(() => ({
       viewer: Boolean(document.querySelector('.cesium-viewer canvas')),
       objects: document.body.textContent?.includes('24 OBJECTS') ?? false,
+      copilot: Boolean(document.querySelector('[data-testid="copilot-panel"]')),
       hostHeight: document.querySelector('[data-testid="cesium-host"]')?.clientHeight ?? 0
     }))()`)
-    if (state.viewer && state.objects && state.hostHeight > 500) {
+    if (state.viewer && state.objects && state.copilot && state.hostHeight > 500) {
       console.log(`HYDROPILOT_DESKTOP_SMOKE_OK ${JSON.stringify(state)}`)
       return
     }
     await sleep(500)
   }
-  throw new Error('Packaged Electron runtime did not render the Cesium scene and 24 demo objects')
+  throw new Error('Packaged Electron runtime did not render the Cesium scene, demo objects, and copilot UI')
 }
 
 async function createWindow() {
@@ -200,6 +253,7 @@ async function createWindow() {
     backgroundColor: '#06111f',
     title: 'HydroPilot',
     webPreferences: {
+      preload: join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -241,6 +295,7 @@ function shutdown() {
 
 app.whenReady().then(async () => {
   try {
+    registerSecretHandlers()
     await boot()
   } catch (error) {
     console.error(error)
