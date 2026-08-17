@@ -15,15 +15,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS
-            os: macos-14
-            artifact: macos
-          - name: Windows
+          - name: macOS Apple Silicon
+            os: macos-15
+            artifact: macos-arm64
+          - name: macOS Intel
+            os: macos-15-intel
+            artifact: macos-x64
+          - name: Windows x64
             os: windows-latest
-            artifact: windows
-          - name: Linux
+            artifact: windows-x64
+          - name: Linux x64
             os: ubuntu-latest
-            artifact: linux
+            artifact: linux-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +41,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          npm --prefix apps/desktop version --no-git-tag-version "$VERSION"
+          npm --prefix apps/desktop version "$VERSION" --no-git-tag-version
 
       - name: Build API sidecar
         shell: bash
