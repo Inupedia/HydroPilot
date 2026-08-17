@@ -36,12 +36,15 @@ jobs:
       - name: Build Linux unpacked desktop app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm --prefix apps/desktop run pack -- --linux dir
+        run: npm --prefix apps/desktop run pack
       - name: Verify packaged resources
         run: |
           test -f apps/desktop/release/linux-unpacked/resources/web/index.html
           test -x apps/desktop/release/linux-unpacked/resources/api/hydropilot-api
           test -f apps/desktop/release/linux-unpacked/resources/data/demo/sacramento_v0_1.json
+      - name: Launch packaged Electron and verify Cesium
+        run: |
+          xvfb-run -a env HYDROPILOT_DESKTOP_SMOKE=1 apps/desktop/release/linux-unpacked/hydropilot
 
   package-desktop:
     if: github.event_name == 'workflow_dispatch'
