@@ -2,15 +2,55 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  prepare-release:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      should_release: ${{ steps.meta.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        name: Resolve version and release state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            TAG="$GITHUB_REF_NAME"
+            VERSION="${TAG#v}"
+          else
+            VERSION="$(node -p "require('./apps/desktop/package.json').version")"
+            TAG="v${VERSION}"
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            SHOULD_RELEASE=false
+            echo "Release $TAG already exists; skipping package publication."
+          else
+            SHOULD_RELEASE=true
+            echo "Release $TAG is missing; native desktop packages will be published."
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+
   build-desktop:
     name: Build ${{ matrix.name }} desktop
+    needs: prepare-release
+    if: needs.prepare-release.outputs.should_release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -37,11 +77,9 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Set package version from tag
+      - name: Set package version
         shell: bash
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          npm --prefix apps/desktop version "$VERSION" --no-git-tag-version
+        run: npm --prefix apps/desktop version "${{ needs.prepare-release.outputs.version }}" --no-git-tag-version
 
       - name: Build API sidecar
         shell: bash
@@ -76,7 +114,8 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    needs: build-desktop
+    needs: [prepare-release, build-desktop]
+    if: needs.prepare-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,8 +128,15 @@ jobs:
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+          RELEASE_TARGET: ${{ github.sha }}
+        shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" release-assets/* \
-            --verify-tag \
-            --generate-notes \
-            --title "HydroPilot $GITHUB_REF_NAME"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --target "$RELEASE_TARGET" \
+              --generate-notes \
+              --title "HydroPilot $RELEASE_TAG"
+          fi
