@@ -105,6 +105,15 @@ function getFreePort() {
   })
 }
 
+function getDevelopmentApiPort() {
+  const raw = process.env.HYDROPILOT_API_PORT ?? '8000'
+  const port = Number(raw)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid HYDROPILOT_API_PORT: ${raw}`)
+  }
+  return port
+}
+
 function startApi(port) {
   const fixture = resourcePath('data', 'demo', 'sacramento_v0_1.json')
   const env = {
@@ -279,7 +288,7 @@ async function createWindow() {
 }
 
 async function boot() {
-  apiPort = await getFreePort()
+  apiPort = app.isPackaged ? await getFreePort() : getDevelopmentApiPort()
   startApi(apiPort)
   await waitForApi(apiPort)
   await createWindow()
