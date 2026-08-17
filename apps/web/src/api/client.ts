@@ -1,4 +1,4 @@
-import type { HydroObject, NetworkPathItem } from '../types'
+import type { HydroObject, HydroState, NetworkPathItem } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
@@ -11,4 +11,12 @@ async function getJson<T>(path: string): Promise<T> {
 export const hydroApi = {
   objects: () => getJson<HydroObject[]>('/api/objects'),
   downstream: (id: string, maxHops = 8) => getJson<NetworkPathItem[]>(`/api/network/${id}/downstream?max_hops=${maxHops}`),
+  async releaseScenario(release_cms: number): Promise<HydroState[]> {
+    const response = await fetch(`${API_BASE}/api/scenarios/release`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ release_cms, duration_minutes: 180, dt_minutes: 30, max_hops: 6 }),
+    })
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+    return (await response.json()).states as HydroState[]
+  },
 }
