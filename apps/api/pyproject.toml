@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hydropilot-api"
-version = "0.1.0"
+version = "0.2.0"
 description = "FastAPI backend for the HydroPilot water-network digital twin demonstrator"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.128,<1",
+  "httpx>=0.28,<1",
   "pydantic-settings>=2.10,<3",
   "psycopg[binary]>=3.2,<4",
   "uvicorn[standard]>=0.35,<1",
@@ -16,7 +17,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "httpx>=0.28,<1",
   "pytest>=8.4,<10",
 ]
 
