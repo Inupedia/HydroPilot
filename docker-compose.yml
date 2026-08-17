@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_DB: hydropilot
+      POSTGRES_USER: hydropilot
+      POSTGRES_PASSWORD: hydropilot
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hydropilot -d hydropilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - hydropilot_pgdata:/var/lib/postgresql/data
+
+volumes:
+  hydropilot_pgdata:
