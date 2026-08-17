@@ -1,18 +1,46 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
+from hydropilot_api.config import get_settings
+from hydropilot_api.domain import HydroObject, NetworkPathItem, ObjectType
+from hydropilot_api.repositories.fixture import get_fixture_repository
+from hydropilot_api.services.scenario import ReleaseScenarioRequest, ReleaseScenarioResponse, run_release_scenario
+from hydropilot_api.topology import downstream_path
 
-app = FastAPI(
-    title="HydroPilot API",
-    version="0.1.0",
-    description=(
-        "API for the HydroPilot water-network digital twin demonstrator. "
-        "Not for operational flood-control or dispatch decisions."
-    ),
-)
+settings = get_settings()
+app = FastAPI(title="HydroPilot API", version="0.1.0", description="API for the HydroPilot water-network digital twin demonstrator. Not for operational flood-control or dispatch decisions.")
+
+
+def repo():
+    return get_fixture_repository(str(settings.demo_fixture_path))
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {
-        "status": "ok",
-        "service": "hydropilot-api",
-    }
+    return {"status": "ok", "service": settings.service_name}
+
+
+@app.get("/api/objects", response_model=list[HydroObject])
+def list_objects(object_type: ObjectType | None = Query(default=None)) -> list[HydroObject]:
+    return repo().list_objects(object_type)
+
+
+@app.get("/api/objects/{object_id}", response_model=HydroObject)
+def get_object(object_id: str) -> HydroObject:
+    obj = repo().get_object(object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    return obj
+
+
+@app.get("/api/network/{object_id}/downstream", response_model=list[NetworkPathItem])
+def get_downstream(object_id: str, max_hops: int = Query(default=8, ge=0, le=25)) -> list[NetworkPathItem]:
+    if repo().get_object(object_id) is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    return downstream_path(object_id, repo().list_relations(), max_hops=max_hops)
+
+
+@app.post("/api/scenarios/release", response_model=ReleaseScenarioResponse)
+def release_scenario(request: ReleaseScenarioRequest) -> ReleaseScenarioResponse:
+    try:
+        return run_release_scenario(repo(), request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"object not found: {exc.args[0]}") from exc
