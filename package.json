@@ -3,9 +3,9 @@
   "version": "0.2.1",
   "private": true,
   "scripts": {
-    "setup": "python scripts/setup_dev.py",
+    "setup": "node scripts/run_python.mjs scripts/setup_dev.py",
     "dev": "npm --prefix apps/desktop run dev",
-    "dev:web": "python scripts/dev_web.py",
+    "dev:web": "node scripts/run_python.mjs scripts/dev_web.py",
     "test": "npm --prefix apps/web test -- --run"
   }
 }
