@@ -103,11 +103,18 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run dist
 
-      - name: Remove unpacked directories
+      - name: Keep distributable release files only
         shell: bash
         run: |
           rm -rf apps/desktop/release/*-unpacked
           rm -rf apps/desktop/release/mac apps/desktop/release/mac-arm64
+          find apps/desktop/release -maxdepth 1 -type f \
+            ! -name '*.dmg' \
+            ! -name '*.zip' \
+            ! -name '*.exe' \
+            ! -name '*.AppImage' \
+            ! -name '*.tar.gz' \
+            -delete
 
       - uses: actions/upload-artifact@v4
         with:
@@ -143,3 +150,30 @@ jobs:
               --generate-notes \
               --title "HydroPilot $RELEASE_TAG"
           fi
+
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+            case "$asset" in
+              *.dmg|*.zip|*.exe|*.AppImage|*.tar.gz) ;;
+              *) gh release delete-asset "$RELEASE_TAG" "$asset" --yes ;;
+            esac
+          done
+
+  clean-existing-release:
+    name: Clean existing GitHub Release
+    needs: prepare-release
+    if: needs.prepare-release.outputs.should_release == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove non-distributable assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+            case "$asset" in
+              *.dmg|*.zip|*.exe|*.AppImage|*.tar.gz) ;;
+              *) gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$GH_REPO" --yes ;;
+            esac
+          done
