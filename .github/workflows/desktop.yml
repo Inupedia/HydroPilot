@@ -44,7 +44,13 @@ jobs:
           test -f apps/desktop/release/linux-unpacked/resources/data/demo/sacramento_v0_1.json
       - name: Launch packaged Electron and verify Cesium
         run: |
-          xvfb-run -a env HYDROPILOT_DESKTOP_SMOKE=1 apps/desktop/release/linux-unpacked/hydropilot --no-sandbox
+          xvfb-run -a env HYDROPILOT_DESKTOP_SMOKE=1 \
+            apps/desktop/release/linux-unpacked/hydropilot \
+            --no-sandbox \
+            --ignore-gpu-blocklist \
+            --enable-webgl \
+            --use-angle=swiftshader \
+            --enable-unsafe-swiftshader
 
   package-desktop:
     if: github.event_name == 'workflow_dispatch'
