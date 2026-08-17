@@ -26,7 +26,7 @@ try {
   await page.waitForFunction(() => {
     const status = document.querySelector('[data-testid="scenario-status"]')?.textContent ?? ''
     return status.includes('B m³')
-  }, { timeout: 30_000 })
+  }, undefined, { timeout: 30_000 })
 
   await page.waitForTimeout(1_500)
   await page.screenshot({ path: output, fullPage: true })
