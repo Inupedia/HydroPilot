@@ -1,0 +1,62 @@
+{
+  "name": "hydropilot-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev": "concurrently -k -s first \"npm --prefix ../web run dev -- --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env HYDROPILOT_RENDERER_URL=http://127.0.0.1:5173 electron .\"",
+    "build:web": "cross-env VITE_API_BASE= npm --prefix ../web run build",
+    "pack": "npm run build:web && electron-builder --dir",
+    "dist": "npm run build:web && electron-builder"
+  },
+  "devDependencies": {
+    "concurrently": "latest",
+    "cross-env": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "wait-on": "latest"
+  },
+  "build": {
+    "appId": "com.inupedia.hydropilot",
+    "productName": "HydroPilot",
+    "executableName": "hydropilot",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web"
+      },
+      {
+        "from": "resources/api",
+        "to": "api"
+      },
+      {
+        "from": "../../data/demo/sacramento_v0_1.json",
+        "to": "data/demo/sacramento_v0_1.json"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis", "zip"]
+    },
+    "linux": {
+      "category": "Science",
+      "target": ["AppImage", "tar.gz"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
