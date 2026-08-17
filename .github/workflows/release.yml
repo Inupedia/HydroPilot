@@ -78,8 +78,8 @@ jobs:
           node-version: '22'
 
       - name: Set package version
-        shell: bash
-        run: npm --prefix apps/desktop version "${{ needs.prepare-release.outputs.version }}" --no-git-tag-version --allow-same-version
+        working-directory: apps/desktop
+        run: npm version "${{ needs.prepare-release.outputs.version }}" --no-git-tag-version --allow-same-version
 
       - name: Build API sidecar
         shell: bash
@@ -90,15 +90,18 @@ jobs:
           python scripts/stage_desktop_api.py
 
       - name: Install renderer
-        run: npm --prefix apps/web install
+        working-directory: apps/web
+        run: npm install
 
       - name: Install desktop shell
-        run: npm --prefix apps/desktop install
+        working-directory: apps/desktop
+        run: npm install
 
       - name: Build installers
+        working-directory: apps/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm --prefix apps/desktop run dist
+        run: npm run dist
 
       - name: Remove unpacked directories
         shell: bash
