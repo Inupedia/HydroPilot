@@ -7,6 +7,8 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+/build/
+/hydropilot-api.spec
 
 # Environment
 .env
@@ -19,6 +21,8 @@ dist/
 coverage/
 playwright-report/
 test-results/
+apps/desktop/release/
+apps/desktop/resources/api/
 
 # IDE / OS
 .DS_Store
