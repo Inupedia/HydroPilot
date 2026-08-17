@@ -1,24 +1,50 @@
 # HydroPilot
 
-**AI-native water network digital twin for flood control and reservoir dispatch.**
+HydroPilot is a water-network digital twin demonstrator for flood-control and dispatch scenes.
 
-HydroPilot is an open-source project for building an interactive water-network digital twin from public data. The first milestone focuses on a trustworthy, testable foundation: water-network objects and topology, Cesium-based 3D visualization, simple reservoir and river-routing models, and lightweight flood-model integration.
+V0.1 proves the foundation: public water-network data, directed topology, simple deterministic hydro models, APIs, and a Cesium-ready map-first UI.
 
-## v0.1 direction
+## What v0.1 includes
 
-- Public/open hydrology and GIS datasets
-- PostgreSQL + PostGIS water-network data model
-- Vue 3 + TypeScript + CesiumJS frontend
-- FastAPI backend
-- 0D reservoir mass-balance model
-- 1D Muskingum river routing
-- Optional tiny SFINCS integration/regression fixture
-- GitHub Actions for linting, tests, integration tests, and model regression
+- Sacramento public-data-derived demo fixture.
+- `hydro_object` / `hydro_relation` domain model.
+- Directed downstream traversal over `FLOWS_TO` relations.
+- 0D reservoir mass balance.
+- 1D Muskingum river routing.
+- FastAPI object, topology, and release-scenario APIs.
+- Vue 3 map-first water-network viewer.
+- Timeline-driven scenario state.
+- GitHub Actions quality gates.
+- Optional non-blocking SFINCS tiny regression adapter.
 
-The v0.1 scope intentionally prioritizes **display, topology, reproducibility, and automated testing** over production-grade flood forecasting or operational dispatch optimization.
+## Quickstart
 
-## Development approach
+```bash
+make core-test
+make api-test
+make verify
+make api-dev
+```
 
-Planning and implementation follow the task-oriented workflow inspired by [obra/superpowers](https://github.com/obra/superpowers): design first, bite-sized implementation plans, TDD where practical, frequent commits, and verification before completion.
+API smoke:
 
-See `docs/superpowers/` as planning documents are added.
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8000/api/network/reach-001/downstream?max_hops=4
+```
+
+Web app:
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+## Data policy
+
+Only small, reviewable demo fixtures are committed. Raw public datasets, model outputs, and generated caches stay out of Git.
+
+## Safety and scope
+
+HydroPilot v0.1 is a demonstrator. It is not operational flood-control, reservoir-dispatch, emergency warning, or engineering-design decision support.
