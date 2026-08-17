@@ -18,7 +18,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e packages/hydropilot-core -e apps/api pytest httpx
       - name: Verify
-        run: make verify
+        run: |
+          make verify
+          python -m py_compile scripts/setup_dev.py scripts/dev_web.py
 
   compose-static:
     runs-on: ubuntu-latest
@@ -34,6 +36,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Validate root scripts
+        run: |
+          node -e "const p=require('./package.json'); if(!p.scripts?.dev || !p.scripts?.['dev:web']) process.exit(1)"
+          node --check scripts/run_python.mjs
       - name: Install
         run: cd apps/web && npm install
       - name: Test
