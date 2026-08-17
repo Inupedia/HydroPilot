@@ -1,0 +1,86 @@
+name: Cleanup merged branches
+
+on:
+  pull_request:
+    types: [closed]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cleanup-branches.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup-merged-pr:
+    name: Delete merged PR head branch
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete merged head branch
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const branch = context.payload.pull_request.head.ref
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${branch}`,
+              })
+              core.notice(`Deleted merged branch: ${branch}`)
+            } catch (error) {
+              if (error.status === 422) {
+                core.warning(`Branch ${branch} could not be deleted (possibly protected or already removed).`)
+                return
+              }
+              throw error
+            }
+
+  cleanup-existing-merged-branches:
+    name: Cleanup existing merged branches
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove stale merged PR head branches
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'closed',
+              sort: 'updated',
+              direction: 'desc',
+              per_page: 100,
+            })
+
+            const seen = new Set()
+            for (const pr of pulls) {
+              if (!pr.merged_at) continue
+              if (pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) continue
+              const branch = pr.head.ref
+              if (!branch || branch === context.payload.repository?.default_branch || seen.has(branch)) continue
+              seen.add(branch)
+
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${branch}`,
+                })
+                core.notice(`Deleted stale merged branch: ${branch}`)
+              } catch (error) {
+                if (error.status === 422) {
+                  core.info(`Skipped ${branch}: protected or already deleted.`)
+                  continue
+                }
+                throw error
+              }
+            }
