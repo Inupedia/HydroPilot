@@ -33,6 +33,8 @@ jobs:
         run: npm --prefix apps/web install
       - name: Install desktop shell
         run: npm --prefix apps/desktop install
+      - name: Launch development Electron and verify source API
+        run: xvfb-run -a npm --prefix apps/desktop run dev:smoke
       - name: Build Linux unpacked desktop app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
