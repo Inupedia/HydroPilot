@@ -79,7 +79,7 @@ jobs:
 
       - name: Set package version
         shell: bash
-        run: npm --prefix apps/desktop version "${{ needs.prepare-release.outputs.version }}" --no-git-tag-version
+        run: npm --prefix apps/desktop version "${{ needs.prepare-release.outputs.version }}" --no-git-tag-version --allow-same-version
 
       - name: Build API sidecar
         shell: bash
