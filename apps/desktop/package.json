@@ -20,6 +20,7 @@
   "build": {
     "appId": "com.inupedia.hydropilot",
     "productName": "HydroPilot",
+    "executableName": "hydropilot",
     "asar": true,
     "directories": {
       "output": "release"
