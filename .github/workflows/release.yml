@@ -41,12 +41,18 @@ jobs:
             TAG="v${VERSION}"
           fi
 
-          RELEASE_JSON="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>/dev/null || true)"
-          if [[ -n "$RELEASE_JSON" ]]; then
-            IS_DRAFT="$(jq -r '.draft' <<<"$RELEASE_JSON")"
+          # GitHub's get-release-by-tag endpoint only resolves published releases.
+          # List releases instead so an authenticated workflow can also see and remove
+          # a stale draft left by the previous draft-first publication flow.
+          RELEASES_JSON="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --slurp)"
+          MATCH_JSON="$(jq -c --arg tag "$TAG" '[.[][] | select(.tag_name == $tag)] | first // empty' <<<"$RELEASES_JSON")"
+
+          if [[ -n "$MATCH_JSON" ]]; then
+            RELEASE_ID="$(jq -r '.id' <<<"$MATCH_JSON")"
+            IS_DRAFT="$(jq -r '.draft' <<<"$MATCH_JSON")"
             if [[ "$IS_DRAFT" == "true" ]]; then
-              echo "Removing stale draft release $TAG from the previous release workflow."
-              gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+              echo "Removing stale draft release $TAG ($RELEASE_ID)."
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
               SHOULD_RELEASE=true
             else
               SHOULD_RELEASE=false
