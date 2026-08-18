@@ -10,6 +10,7 @@ on:
       - 'scripts/dev_studio.py'
       - 'scripts/build_tauri_sidecar.py'
       - '.github/workflows/desktop.yml'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
 
 jobs:
@@ -54,10 +55,30 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  tauri-build-smoke:
-    runs-on: macos-15
+  native-bundle-smoke:
+    name: Bundle ${{ matrix.name }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS DMG
+            os: macos-15
+            bundles: dmg
+          - name: Windows NSIS
+            os: windows-latest
+            bundles: nsis
+          - name: Linux AppImage + DEB
+            os: ubuntu-22.04
+            bundles: appimage,deb
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libsecret-1-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
@@ -70,12 +91,12 @@ jobs:
       - name: Install React studio
         working-directory: apps/studio
         run: npm install
+      - name: Generate platform icons
+        working-directory: apps/studio
+        run: npm run icons
       - name: Build target-specific API sidecar
         working-directory: apps/studio
         run: npm run sidecar
-      - name: Check Tauri Rust application
-        working-directory: apps/studio/src-tauri
-        run: cargo check --locked || cargo check
-      - name: Build unpackaged Tauri application
+      - name: Build real Tauri bundle
         working-directory: apps/studio
-        run: npm run tauri -- build --debug --no-bundle
+        run: npm run tauri -- build --bundles ${{ matrix.bundles }}
