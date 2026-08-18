@@ -11,12 +11,11 @@ permissions:
 
 jobs:
   prepare-release:
-    name: Resolve v0.3+ release
+    name: Resolve release version
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
-      release_id: ${{ steps.meta.outputs.release_id }}
       should_release: ${{ steps.meta.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
@@ -40,26 +39,22 @@ jobs:
 
           RELEASE_JSON="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>/dev/null || true)"
           if [[ -n "$RELEASE_JSON" ]]; then
-            RELEASE_ID="$(jq -r '.id' <<<"$RELEASE_JSON")"
             IS_DRAFT="$(jq -r '.draft' <<<"$RELEASE_JSON")"
             if [[ "$IS_DRAFT" == "true" ]]; then
+              echo "Removing stale draft release $TAG from the previous release workflow."
+              gh release delete "$TAG" --yes
               SHOULD_RELEASE=true
-              echo "Reusing draft release $TAG ($RELEASE_ID)."
             else
               SHOULD_RELEASE=false
               echo "Release $TAG is already published; skipping native rebuild."
             fi
           else
-            gh release create "$TAG" --draft --target "$GITHUB_SHA" --generate-notes --title "HydroPilot $TAG"
-            RELEASE_JSON="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")"
-            RELEASE_ID="$(jq -r '.id' <<<"$RELEASE_JSON")"
             SHOULD_RELEASE=true
-            echo "Created draft release $TAG ($RELEASE_ID)."
+            echo "Release $TAG is missing; native packages will be built before any tag or release is created."
           fi
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
           echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
 
   build-native:
@@ -72,15 +67,19 @@ jobs:
         include:
           - name: macOS Apple Silicon
             os: macos-15
+            artifact: macos-arm64
             bundles: dmg
           - name: macOS Intel
             os: macos-15-intel
+            artifact: macos-x64
             bundles: dmg
           - name: Windows x64
             os: windows-latest
+            artifact: windows-x64
             bundles: nsis
           - name: Linux x64
             os: ubuntu-22.04
+            artifact: linux-x64
             bundles: appimage,deb
     runs-on: ${{ matrix.os }}
     steps:
@@ -105,19 +104,22 @@ jobs:
       - name: Build target-specific API sidecar
         working-directory: apps/studio
         run: npm run sidecar
-      - name: Build and upload Tauri bundle
-        uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Tauri bundle
+        working-directory: apps/studio
+        run: npm run tauri -- build --bundles ${{ matrix.bundles }}
+      - name: Collect distributable package
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find apps/studio/src-tauri/target/release/bundle -type f \
+            \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp '{}' release-assets/ \;
+          test -n "$(find release-assets -type f -maxdepth 1 -print -quit)"
+      - uses: actions/upload-artifact@v4
         with:
-          projectPath: apps/studio
-          releaseId: ${{ needs.prepare-release.outputs.release_id }}
-          tagName: ${{ needs.prepare-release.outputs.tag }}
-          releaseDraft: true
-          uploadUpdaterJson: false
-          retryAttempts: 2
-          releaseAssetNamePattern: 'HydroPilot_[version]_[platform]_[arch]_[bundle][ext]'
-          args: '--bundles ${{ matrix.bundles }}'
+          name: hydropilot-${{ matrix.artifact }}
+          path: release-assets/*
+          if-no-files-found: error
 
   publish-release:
     name: Publish GitHub Release
@@ -125,12 +127,29 @@ jobs:
     if: needs.prepare-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Publish only after every native build succeeds
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hydropilot-*
+          path: release-assets
+          merge-multiple: true
+      - name: Create tag and publish release atomically
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+          RELEASE_TARGET: ${{ github.sha }}
         shell: bash
         run: |
-          gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --draft=false
-          echo "Published $RELEASE_TAG with native Tauri assets."
+          mapfile -d '' ASSETS < <(find release-assets -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) -print0)
+          if (( ${#ASSETS[@]} == 0 )); then
+            echo "No distributable assets were downloaded." >&2
+            exit 1
+          fi
+
+          gh release create "$RELEASE_TAG" "${ASSETS[@]}" \
+            --repo "$GH_REPO" \
+            --target "$RELEASE_TARGET" \
+            --generate-notes \
+            --title "HydroPilot $RELEASE_TAG"
+          echo "Published $RELEASE_TAG only after every native package completed successfully."
