@@ -1,11 +1,13 @@
 {
   "name": "hydropilot",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "setup": "node scripts/run_python.mjs scripts/setup_dev.py",
-    "dev": "npm --prefix apps/desktop run dev",
-    "dev:web": "node scripts/run_python.mjs scripts/dev_web.py",
-    "test": "npm --prefix apps/web test -- --run"
+    "dev": "npm --prefix apps/studio run dev",
+    "dev:web": "node scripts/run_python.mjs scripts/dev_studio.py",
+    "build": "npm --prefix apps/studio run build",
+    "build:web": "npm --prefix apps/studio run build:web",
+    "test": "npm --prefix apps/studio test"
   }
 }

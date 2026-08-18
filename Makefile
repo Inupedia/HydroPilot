@@ -1,7 +1,7 @@
-.PHONY: setup dev dev-web api-test core-test verify api-dev db-up db-down web-test web-build
+.PHONY: setup dev dev-web api-test core-test verify api-dev db-up db-down studio-test studio-build web-test web-build
 
 setup:
-	python scripts/setup_dev.py
+	npm run setup
 
 dev:
 	npm run dev
@@ -27,8 +27,12 @@ db-up:
 db-down:
 	docker compose down
 
-web-test:
-	cd apps/web && npm test -- --run
+studio-test:
+	cd apps/studio && npm test
 
-web-build:
-	cd apps/web && npm run build
+studio-build:
+	cd apps/studio && npm run build:web
+
+web-test: studio-test
+
+web-build: studio-build

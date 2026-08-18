@@ -15,14 +15,14 @@ venv/
 .env.*
 !.env.example
 
-# Node / frontend
+# Node / React / Tauri
 node_modules/
 dist/
 coverage/
 playwright-report/
 test-results/
-apps/desktop/release/
-apps/desktop/resources/api/
+apps/studio/src-tauri/target/
+apps/studio/src-tauri/binaries/hydropilot-api-*
 
 # IDE / OS
 .DS_Store
