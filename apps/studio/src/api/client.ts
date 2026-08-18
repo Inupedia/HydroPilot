@@ -1,7 +1,8 @@
+import { invoke } from '@tauri-apps/api/core'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import type { HydroObject, HydroState, NetworkPathItem } from '../types'
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000'
+let apiBase = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000'
 
 declare global {
   interface Window { __TAURI_INTERNALS__?: unknown }
@@ -33,18 +34,33 @@ export interface LlmChatResponse {
   usage?: Record<string, unknown> | null
 }
 
+function inTauri(): boolean {
+  return Boolean(window.__TAURI_INTERNALS__)
+}
+
+export async function configureApiBase(): Promise<string> {
+  if (inTauri()) {
+    apiBase = await invoke<string>('api_base_url')
+  }
+  return apiBase
+}
+
+export function currentApiBase(): string {
+  return apiBase
+}
+
 function runtimeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  if (window.__TAURI_INTERNALS__) return tauriFetch(input, init)
+  if (inTauri()) return tauriFetch(input, init)
   return window.fetch(input, init)
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  const response = await runtimeFetch(`${API_BASE}${path}`)
+  const response = await runtimeFetch(`${apiBase}${path}`)
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
   return response.json() as Promise<T>
 }
 async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const response = await runtimeFetch(`${API_BASE}${path}`, {
+  const response = await runtimeFetch(`${apiBase}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -61,13 +77,13 @@ export async function waitForApi(timeoutMs = 20_000): Promise<void> {
   let lastError: unknown
   while (Date.now() - started < timeoutMs) {
     try {
-      const response = await runtimeFetch(`${API_BASE}/health`)
+      const response = await runtimeFetch(`${apiBase}/health`)
       if (response.ok) return
       lastError = new Error(`${response.status} ${response.statusText}`)
     } catch (error) { lastError = error }
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
-  throw new Error(`HydroPilot API did not become ready: ${lastError instanceof Error ? lastError.message : String(lastError ?? 'unknown error')}`)
+  throw new Error(`HydroPilot API did not become ready at ${apiBase}: ${lastError instanceof Error ? lastError.message : String(lastError ?? 'unknown error')}`)
 }
 
 export const hydroApi = {
