@@ -10,15 +10,29 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{"label":"main","title":"HydroPilot","width":1520,"height":980,"minWidth":1180,"minHeight":720,"resizable":true,"fullscreen":false}],
-    "security": {"csp": null}
+    "windows": [
+      {
+        "label": "main",
+        "title": "HydroPilot",
+        "width": 1520,
+        "height": 980,
+        "minWidth": 1180,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": { "csp": null }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "category": "DeveloperTool",
     "shortDescription": "AI-native water-network digital twin",
+    "icon": ["icons/icon.png"],
     "externalBin": ["binaries/hydropilot-api"],
-    "resources": {"../../../data/demo/sacramento_v0_1.json": "data/demo/sacramento_v0_1.json"}
+    "resources": {
+      "../../../data/demo/sacramento_v0_1.json": "data/demo/sacramento_v0_1.json"
+    }
   }
 }
