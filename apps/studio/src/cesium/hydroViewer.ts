@@ -81,9 +81,9 @@ export function createHydroViewer(container: HTMLElement): Viewer {
   viewer.scene.globe.baseColor = Color.fromCssColorString('#0b2737')
   viewer.scene.globe.enableLighting = false
   viewer.scene.fog.enabled = false
-  viewer.scene.skyAtmosphere.show = true
-  viewer.scene.sun.show = false
-  viewer.scene.moon.show = false
+  if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = true
+  if (viewer.scene.sun) viewer.scene.sun.show = false
+  if (viewer.scene.moon) viewer.scene.moon.show = false
 
   viewer.camera.setView({
     destination: Rectangle.fromDegrees(-123.1, 37.5, -119.7, 41.25),
