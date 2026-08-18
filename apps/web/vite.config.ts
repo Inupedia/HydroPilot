@@ -1,27 +1,25 @@
-import { cpSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { viteStaticCopy } from 'vite-plugin-static-copy'
 
 const projectRoot = dirname(fileURLToPath(import.meta.url))
-
-function copyCesiumAssets() {
-  return {
-    name: 'copy-cesium-runtime-assets',
-    closeBundle() {
-      const sourceRoot = resolve(projectRoot, 'node_modules/cesium/Build/Cesium')
-      const targetRoot = resolve(projectRoot, 'dist/cesium')
-      mkdirSync(targetRoot, { recursive: true })
-      for (const directory of ['Assets', 'ThirdParty', 'Workers', 'Widgets']) {
-        cpSync(resolve(sourceRoot, directory), resolve(targetRoot, directory), { recursive: true })
-      }
-    },
-  }
-}
+const cesiumSource = resolve(projectRoot, 'node_modules/cesium/Build/Cesium')
+const cesiumBaseUrl = 'cesium'
 
 export default defineConfig({
-  plugins: [vue(), copyCesiumAssets()],
+  plugins: [
+    vue(),
+    viteStaticCopy({
+      targets: [
+        { src: resolve(cesiumSource, 'ThirdParty'), dest: cesiumBaseUrl },
+        { src: resolve(cesiumSource, 'Workers'), dest: cesiumBaseUrl },
+        { src: resolve(cesiumSource, 'Assets'), dest: cesiumBaseUrl },
+        { src: resolve(cesiumSource, 'Widgets'), dest: cesiumBaseUrl },
+      ],
+    }),
+  ],
   test: { environment: 'jsdom' },
-  define: { CESIUM_BASE_URL: JSON.stringify('/cesium/') },
+  define: { CESIUM_BASE_URL: JSON.stringify(`/${cesiumBaseUrl}/`) },
 })
