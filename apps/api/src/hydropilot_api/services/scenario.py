@@ -3,7 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 from hydropilot_core.reservoir import ReservoirState, ReservoirStep, step_reservoir
 from hydropilot_core.routing import MuskingumParameters, route_muskingum
-from hydropilot_api.domain import HydroState
+from hydropilot_api.domain import HydroRelation, HydroState, RelationType
 from hydropilot_api.repositories.protocols import HydroRepository
 from hydropilot_api.topology import downstream_path
 
@@ -21,6 +21,37 @@ class ReleaseScenarioResponse(BaseModel):
     states: list[HydroState]
 
 
+def _release_reach_id(reservoir_id: str, relations: list[HydroRelation]) -> str:
+    targets = [
+        relation.target_id
+        for relation in relations
+        if relation.source_id == reservoir_id and relation.relation_type is RelationType.DISCHARGES_TO
+    ]
+    if len(targets) != 1:
+        raise ValueError(f"reservoir {reservoir_id} must have exactly one DISCHARGES_TO relation")
+    return targets[0]
+
+
+def _routing_parameters(repo: HydroRepository, object_id: str, *, dt_seconds: float) -> MuskingumParameters:
+    reach = repo.get_object(object_id)
+    if reach is None:
+        raise ValueError(f"routing reach not found: {object_id}")
+
+    k_minutes = reach.properties.get("routing_k_minutes")
+    x = reach.properties.get("routing_x")
+    if k_minutes is None or x is None:
+        raise ValueError(f"routing reach {object_id} requires routing_k_minutes and routing_x")
+
+    try:
+        return MuskingumParameters(
+            k_seconds=float(k_minutes) * 60.0,
+            x=float(x),
+            dt_seconds=dt_seconds,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"routing reach {object_id} has invalid routing_k_minutes or routing_x") from exc
+
+
 def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest) -> ReleaseScenarioResponse:
     reservoir = repo.get_object(request.reservoir_id)
     if reservoir is None:
@@ -33,7 +64,9 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
         max_storage_m3=max_storage,
         level_m=float(level) if level is not None else None,
     )
-    downstream = downstream_path("reach-001", repo.list_relations(), max_hops=request.max_hops)
+    relations = repo.list_relations()
+    release_reach_id = _release_reach_id(request.reservoir_id, relations)
+    downstream = downstream_path(release_reach_id, relations, max_hops=request.max_hops)
     timestamps = list(range(0, request.duration_minutes + request.dt_minutes, request.dt_minutes))
     dt_seconds = request.dt_minutes * 60
     states: list[HydroState] = []
@@ -75,11 +108,8 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
     routed_series = [request.release_cms for _ in timestamps]
     initial_flow = request.release_cms * 0.35
 
-    for idx, item in enumerate(downstream, start=1):
-        # For x=0.2, this K/dt range keeps all Muskingum coefficients non-negative
-        # for every supported hop count while increasing travel time downstream.
-        k_seconds = dt_seconds * (0.75 + 0.08 * idx)
-        params = MuskingumParameters(k_seconds=k_seconds, x=0.2, dt_seconds=dt_seconds)
+    for item in downstream:
+        params = _routing_parameters(repo, item.object_id, dt_seconds=dt_seconds)
         routed_series = route_muskingum(
             routed_series,
             params,
