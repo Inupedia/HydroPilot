@@ -1,0 +1,180 @@
+import pytest
+
+from hydropilot_api.domain import (
+    Geometry,
+    HydroObject,
+    HydroRelation,
+    ObjectType,
+    RelationType,
+)
+from hydropilot_api.services import scenario as scenario_module
+from hydropilot_api.services.scenario import ReleaseScenarioRequest, run_release_scenario
+
+
+class MemoryHydroRepository:
+    def __init__(self, objects: list[HydroObject], relations: list[HydroRelation]):
+        self._objects = {item.id: item for item in objects}
+        self._relations = relations
+
+    def list_objects(self, object_type: ObjectType | None = None) -> list[HydroObject]:
+        values = list(self._objects.values())
+        if object_type is not None:
+            values = [item for item in values if item.object_type is object_type]
+        return values
+
+    def get_object(self, object_id: str) -> HydroObject | None:
+        return self._objects.get(object_id)
+
+    def list_relations(self) -> list[HydroRelation]:
+        return self._relations
+
+
+def point() -> Geometry:
+    return Geometry(type="Point", coordinates=[-122.0, 40.0])
+
+
+def line() -> Geometry:
+    return Geometry(type="LineString", coordinates=[[-122.0, 40.0], [-121.9, 39.9]])
+
+
+def reservoir() -> HydroObject:
+    return HydroObject(
+        id="reservoir-alpha",
+        name="Reservoir Alpha",
+        object_type=ObjectType.RESERVOIR,
+        geometry=point(),
+        properties={"initial_storage_m3": 1_000_000, "max_storage_m3": 2_000_000},
+    )
+
+
+def reach(object_id: str, *, k_minutes: float | None = None, x: float | None = None) -> HydroObject:
+    properties = {}
+    if k_minutes is not None:
+        properties["routing_k_minutes"] = k_minutes
+    if x is not None:
+        properties["routing_x"] = x
+    return HydroObject(
+        id=object_id,
+        name=object_id,
+        object_type=ObjectType.RIVER_REACH,
+        geometry=line(),
+        properties=properties,
+    )
+
+
+def relation(
+    relation_id: str,
+    source_id: str,
+    target_id: str,
+    relation_type: RelationType,
+) -> HydroRelation:
+    return HydroRelation(
+        id=relation_id,
+        source_id=source_id,
+        target_id=target_id,
+        relation_type=relation_type,
+    )
+
+
+def test_release_scenario_uses_hydrograph_topology_and_reach_routing_properties(monkeypatch):
+    repo = MemoryHydroRepository(
+        objects=[
+            reservoir(),
+            reach("upstream-release-reach"),
+            reach("routing-reach", k_minutes=47, x=0.31),
+        ],
+        relations=[
+            relation(
+                "reservoir-discharge",
+                "reservoir-alpha",
+                "upstream-release-reach",
+                RelationType.DISCHARGES_TO,
+            ),
+            relation(
+                "network-flow",
+                "upstream-release-reach",
+                "routing-reach",
+                RelationType.FLOWS_TO,
+            ),
+        ],
+    )
+    captured = []
+
+    def capture_route(inflow_cms, params, initial_outflow_cms=None):
+        captured.append(params)
+        return list(inflow_cms)
+
+    monkeypatch.setattr(scenario_module, "route_muskingum", capture_route)
+
+    result = run_release_scenario(
+        repo,
+        ReleaseScenarioRequest(
+            reservoir_id="reservoir-alpha",
+            release_cms=100,
+            duration_minutes=60,
+            dt_minutes=30,
+            max_hops=1,
+        ),
+    )
+
+    flow_objects = {state.object_id for state in result.states if state.variable == "flow"}
+    assert flow_objects == {"routing-reach"}
+    assert len(captured) == 1
+    assert captured[0].k_seconds == pytest.approx(47 * 60)
+    assert captured[0].x == pytest.approx(0.31)
+
+
+@pytest.mark.parametrize(
+    "relations",
+    [
+        [],
+        [
+            relation("discharge-a", "reservoir-alpha", "reach-a", RelationType.DISCHARGES_TO),
+            relation("discharge-b", "reservoir-alpha", "reach-b", RelationType.DISCHARGES_TO),
+        ],
+    ],
+)
+def test_release_scenario_requires_exactly_one_discharge_target(relations):
+    repo = MemoryHydroRepository(
+        objects=[reservoir(), reach("reach-a"), reach("reach-b")],
+        relations=relations,
+    )
+
+    with pytest.raises(ValueError, match="exactly one DISCHARGES_TO"):
+        run_release_scenario(
+            repo,
+            ReleaseScenarioRequest(
+                reservoir_id="reservoir-alpha",
+                release_cms=100,
+                duration_minutes=30,
+                dt_minutes=30,
+                max_hops=1,
+            ),
+        )
+
+
+def test_release_scenario_requires_stored_routing_parameters():
+    repo = MemoryHydroRepository(
+        objects=[reservoir(), reach("release-reach"), reach("routing-reach", k_minutes=47)],
+        relations=[
+            relation(
+                "reservoir-discharge",
+                "reservoir-alpha",
+                "release-reach",
+                RelationType.DISCHARGES_TO,
+            ),
+            relation("network-flow", "release-reach", "routing-reach", RelationType.FLOWS_TO),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="routing_k_minutes and routing_x"):
+        run_release_scenario(
+            repo,
+            ReleaseScenarioRequest(
+                reservoir_id="reservoir-alpha",
+                release_cms=100,
+                duration_minutes=30,
+                dt_minutes=30,
+                max_hops=1,
+            ),
+        )
