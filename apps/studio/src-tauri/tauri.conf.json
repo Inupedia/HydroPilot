@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "HydroPilot",
+  "version": "0.3.0",
+  "identifier": "com.inupedia.hydropilot",
+  "build": {
+    "beforeDevCommand": "node ../../scripts/run_python.mjs ../../scripts/dev_studio.py",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build:web",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{"label":"main","title":"HydroPilot","width":1520,"height":980,"minWidth":1180,"minHeight":720,"resizable":true,"fullscreen":false}],
+    "security": {"csp": null}
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "AI-native water-network digital twin",
+    "externalBin": ["binaries/hydropilot-api"],
+    "resources": {"../../../data/demo/sacramento_v0_1.json": "data/demo/sacramento_v0_1.json"}
+  }
+}
