@@ -1,8 +1,8 @@
 import { cpSync, createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
 import { dirname, extname, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vitest/config'
 
 const projectRoot = dirname(fileURLToPath(import.meta.url))
 const cesiumSource = resolve(projectRoot, 'node_modules/cesium/Build/Cesium')
