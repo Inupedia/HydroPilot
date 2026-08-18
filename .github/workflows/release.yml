@@ -2,10 +2,8 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - 'v*'
+    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -13,42 +11,59 @@ permissions:
 
 jobs:
   prepare-release:
-    name: Resolve release version
+    name: Resolve v0.3+ release
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
+      release_id: ${{ steps.meta.outputs.release_id }}
       should_release: ${{ steps.meta.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
       - id: meta
-        name: Resolve version and release state
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          APP_VERSION="$(node -p "require('./apps/studio/package.json').version")"
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             TAG="$GITHUB_REF_NAME"
             VERSION="${TAG#v}"
+            if [[ "$VERSION" != "$APP_VERSION" ]]; then
+              echo "Tag $TAG does not match apps/studio version $APP_VERSION" >&2
+              exit 1
+            fi
           else
-            VERSION="$(node -p "require('./apps/desktop/package.json').version")"
+            VERSION="$APP_VERSION"
             TAG="v${VERSION}"
           fi
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            SHOULD_RELEASE=false
-            echo "Release $TAG already exists; skipping package publication."
+          RELEASE_JSON="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>/dev/null || true)"
+          if [[ -n "$RELEASE_JSON" ]]; then
+            RELEASE_ID="$(jq -r '.id' <<<"$RELEASE_JSON")"
+            IS_DRAFT="$(jq -r '.draft' <<<"$RELEASE_JSON")"
+            if [[ "$IS_DRAFT" == "true" ]]; then
+              SHOULD_RELEASE=true
+              echo "Reusing draft release $TAG ($RELEASE_ID)."
+            else
+              SHOULD_RELEASE=false
+              echo "Release $TAG is already published; skipping native rebuild."
+            fi
           else
+            gh release create "$TAG" --draft --target "$GITHUB_SHA" --generate-notes --title "HydroPilot $TAG"
+            RELEASE_JSON="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")"
+            RELEASE_ID="$(jq -r '.id' <<<"$RELEASE_JSON")"
             SHOULD_RELEASE=true
-            echo "Release $TAG is missing; native desktop packages will be published."
+            echo "Created draft release $TAG ($RELEASE_ID)."
           fi
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
           echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
 
-  build-desktop:
-    name: Build ${{ matrix.name }} desktop
+  build-native:
+    name: Build ${{ matrix.name }}
     needs: prepare-release
     if: needs.prepare-release.outputs.should_release == 'true'
     strategy:
@@ -57,123 +72,65 @@ jobs:
         include:
           - name: macOS Apple Silicon
             os: macos-15
-            artifact: macos-arm64
+            bundles: dmg
           - name: macOS Intel
             os: macos-15-intel
-            artifact: macos-x64
+            bundles: dmg
           - name: Windows x64
             os: windows-latest
-            artifact: windows-x64
+            bundles: nsis
           - name: Linux x64
-            os: ubuntu-latest
-            artifact: linux-x64
+            os: ubuntu-22.04
+            bundles: appimage,deb
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libsecret-1-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - name: Set package version
-        working-directory: apps/desktop
-        run: npm version "${{ needs.prepare-release.outputs.version }}" --no-git-tag-version --allow-same-version
-
-      - name: Build API sidecar
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e packages/hydropilot-core -e apps/api pyinstaller
-          pyinstaller --clean --noconfirm --onefile --name hydropilot-api --paths apps/api/src --paths packages/hydropilot-core/src apps/api/desktop_entry.py
-          python scripts/stage_desktop_api.py
-
-      - name: Install renderer
-        working-directory: apps/web
+      - name: Install backend and sidecar build tools
+        run: python -m pip install -e packages/hydropilot-core -e apps/api pyinstaller
+      - name: Install React studio
+        working-directory: apps/studio
         run: npm install
-
-      - name: Install desktop shell
-        working-directory: apps/desktop
-        run: npm install
-
-      - name: Build installers
-        working-directory: apps/desktop
+      - name: Build target-specific API sidecar
+        working-directory: apps/studio
+        run: npm run sidecar
+      - name: Build and upload Tauri bundle
+        uses: tauri-apps/tauri-action@v1
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run dist
-
-      - name: Keep distributable release files only
-        shell: bash
-        run: |
-          rm -rf apps/desktop/release/*-unpacked
-          rm -rf apps/desktop/release/mac apps/desktop/release/mac-arm64
-          find apps/desktop/release -maxdepth 1 -type f \
-            ! -name '*.dmg' \
-            ! -name '*.zip' \
-            ! -name '*.exe' \
-            ! -name '*.AppImage' \
-            ! -name '*.tar.gz' \
-            -delete
-
-      - uses: actions/upload-artifact@v4
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: hydropilot-desktop-${{ matrix.artifact }}
-          path: apps/desktop/release/*
-          if-no-files-found: error
+          projectPath: apps/studio
+          releaseId: ${{ needs.prepare-release.outputs.release_id }}
+          tagName: ${{ needs.prepare-release.outputs.tag }}
+          releaseDraft: true
+          uploadUpdaterJson: false
+          retryAttempts: 2
+          releaseAssetNamePattern: 'HydroPilot_[version]_[platform]_[arch]_[bundle][ext]'
+          args: '--bundles ${{ matrix.bundles }}'
 
   publish-release:
     name: Publish GitHub Release
-    needs: [prepare-release, build-desktop]
+    needs: [prepare-release, build-native]
     if: needs.prepare-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: hydropilot-desktop-*
-          path: release-assets
-          merge-multiple: true
-
-      - name: Publish release assets
+      - name: Publish only after every native build succeeds
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
-          RELEASE_TARGET: ${{ github.sha }}
-        shell: bash
-        run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release-assets/* --clobber
-          else
-            gh release create "$RELEASE_TAG" release-assets/* \
-              --target "$RELEASE_TARGET" \
-              --generate-notes \
-              --title "HydroPilot $RELEASE_TAG"
-          fi
-
-          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
-            case "$asset" in
-              *.dmg|*.zip|*.exe|*.AppImage|*.tar.gz) ;;
-              *) gh release delete-asset "$RELEASE_TAG" "$asset" --yes ;;
-            esac
-          done
-
-  clean-existing-release:
-    name: Clean existing GitHub Release
-    needs: prepare-release
-    if: needs.prepare-release.outputs.should_release == 'false'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Remove non-distributable assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
         shell: bash
         run: |
-          gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
-            case "$asset" in
-              *.dmg|*.zip|*.exe|*.AppImage|*.tar.gz) ;;
-              *) gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$GH_REPO" --yes ;;
-            esac
-          done
+          gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --draft=false
+          echo "Published $RELEASE_TAG with native Tauri assets."

@@ -1,158 +1,128 @@
 # HydroPilot
 
-HydroPilot is an AI-oriented water-network digital-twin demonstrator for flood-control and dispatch scenes. It combines a FastAPI backend, deterministic hydro models, Vue 3 + Cesium, and an Electron desktop shell.
+**AI-native water-network digital twin desktop application for flood-control and dispatch demonstrations.**
 
-## Start here — run the whole application
+HydroPilot v0.3 uses **React + CesiumJS + Tauri 2** for the desktop client and keeps the existing **FastAPI + Python hydrologic core** as a local sidecar service. The previous Vue/Electron client has been retired.
 
-Do **not** start with `apps/web` alone unless you intentionally want frontend-only development. The Vue app depends on the HydroPilot API.
+## What works
 
-From the repository root, run the one-time setup:
+- real Cesium 3D viewer with a Sacramento public-data demo fixture;
+- directed water-network topology (`FLOWS_TO`) and downstream-chain highlighting;
+- 0D reservoir mass-balance model;
+- 1D Muskingum routing with timeline playback;
+- AI Copilot with guided map commands;
+- LLM providers: OpenAI, Anthropic, Gemini, DeepSeek, SiliconFlow, OpenRouter, Ollama, and custom OpenAI-compatible endpoints;
+- OS credential-store protection for desktop LLM API keys;
+- packaged FastAPI sidecar with a dynamically allocated loopback port;
+- GitHub Actions browser acceptance, native Tauri build smoke, and four-platform Releases.
+
+> HydroPilot is currently a public-data engineering demonstrator, not operational flood-control decision support.
+
+## Repository layout
+
+```text
+HydroPilot/
+├── apps/
+│   ├── api/                  # FastAPI local service
+│   └── studio/               # React + Cesium + Tauri 2 desktop app
+│       ├── src/              # React UI and Cesium renderer
+│       └── src-tauri/        # Rust desktop shell / sidecar lifecycle
+├── packages/
+│   └── hydropilot-core/      # Reservoir + Muskingum model core
+├── data/demo/                # Small public demonstration fixture
+└── scripts/                  # dev / sidecar / fixture tooling
+```
+
+## Development
+
+Prerequisites:
+
+- Python 3.12+
+- Node.js 22+
+- Rust stable (`cargo` and `rustc`)
+- platform prerequisites required by Tauri 2 (Xcode Command Line Tools on macOS; MSVC/WebView2 on Windows; WebKitGTK and related packages on Linux)
+
+Install project dependencies:
 
 ```bash
 npm run setup
 ```
 
-Then start the complete desktop development stack:
+Start the complete desktop development stack:
 
 ```bash
 npm run dev
 ```
 
-That single command starts:
+This launches the Tauri window and the development FastAPI service. In development the API is available at:
 
 ```text
-Electron
-├── local FastAPI backend (auto-started by Electron)
-├── Vue/Vite renderer
-└── Cesium water-network scene
+http://127.0.0.1:8000/health
+http://127.0.0.1:8000/docs
 ```
 
-If you prefer a normal browser instead of Electron, run:
+For browser-only frontend development:
 
 ```bash
 npm run dev:web
 ```
 
-That starts both services together:
+Do not start Vite by itself if you expect HydroPilot API-backed actions to work.
 
-```text
-UI:       http://127.0.0.1:5173
-API:      http://127.0.0.1:8000
-API docs: http://127.0.0.1:8000/docs
-```
-
-Running only this command:
+## Tests and builds
 
 ```bash
-npm --prefix apps/web run dev
-```
-
-starts **only Vite** and therefore is not a complete HydroPilot runtime.
-
-## What HydroPilot includes
-
-- Sacramento public-data-derived demo fixture.
-- Directed `hydro_object` / `hydro_relation` water-network model.
-- Downstream traversal over `FLOWS_TO` relations.
-- 0D reservoir mass balance and 1D Muskingum routing.
-- FastAPI object, topology, release-scenario, and LLM APIs.
-- Vue 3 + Cesium map-first interface and scenario timeline.
-- Electron desktop shell that owns the local FastAPI sidecar lifecycle.
-- Multi-provider LLM support: OpenAI, Anthropic, Gemini, DeepSeek, SiliconFlow, OpenRouter, Ollama, and custom OpenAI-compatible endpoints.
-- Electron `safeStorage` for desktop API keys.
-- GitHub Actions CI, Cesium visual acceptance, packaged desktop smoke tests, releases, and merged-branch cleanup.
-- Optional non-blocking SFINCS tiny regression adapter.
-
-## Backend-only development
-
-If you intentionally want to work only on the API:
-
-```bash
-make api-dev
-```
-
-Then verify it:
-
-```bash
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/api/network/reach-001/downstream?max_hops=4
-curl http://127.0.0.1:8000/api/llm/providers
-```
-
-Interactive API documentation is available at:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-## LLM providers
-
-HydroPilot separates providers from wire-protocol adapters so compatible vendors can share tested implementations.
-
-| Provider | Adapter family | API key |
-| --- | --- | --- |
-| OpenAI | `openai-compatible` | required |
-| Anthropic | `anthropic` | required |
-| Google Gemini | `gemini` | required |
-| DeepSeek | `openai-compatible` | required |
-| SiliconFlow | `openai-compatible` | required |
-| OpenRouter | `openai-compatible` | required |
-| Ollama | `ollama` | none by default |
-| Custom OpenAI-compatible | `openai-compatible` | configurable |
-
-In the Electron app, configure provider/model/API key from the Copilot panel. Desktop secrets are stored through Electron `safeStorage`.
-
-## Desktop runtime architecture
-
-```text
-HydroPilot Electron
-├── Electron main process
-│   ├── allocates an available loopback API port
-│   ├── starts/stops FastAPI automatically
-│   ├── exposes encrypted secret storage
-│   └── serves/proxies the renderer and /api
-├── Vue 3 renderer
-│   └── CesiumJS water-network digital twin
-├── hydropilot-api sidecar
-└── demo data
-```
-
-In source development Electron launches Python directly. In packaged releases FastAPI is compiled into a PyInstaller sidecar, so end users do not need Python installed.
-
-## Build a desktop package
-
-Build the API sidecar first:
-
-```bash
-python -m pip install pyinstaller
-pyinstaller --clean --noconfirm --onefile --name hydropilot-api \
-  --paths apps/api/src \
-  --paths packages/hydropilot-core/src \
-  apps/api/desktop_entry.py
-python scripts/stage_desktop_api.py
-```
-
-Then package Electron for the current OS:
-
-```bash
-npm --prefix apps/desktop run dist
-```
-
-Installers are written to `apps/desktop/release/`. GitHub Actions builds native macOS Apple Silicon, macOS Intel, Windows x64, and Linux x64 release assets.
-
-## Tests
-
-```bash
-make verify
 npm test
+npm run build:web
+make verify
 ```
 
-The repository also runs CI, real-browser Cesium visual acceptance, and packaged Electron smoke acceptance in GitHub Actions.
+Create a native Tauri bundle locally:
 
-## Data policy
+```bash
+npm run build
+```
 
-Only small, reviewable demo fixtures are committed. Raw public datasets, model outputs, generated caches, and secrets stay out of Git.
+The build first produces a platform-specific PyInstaller FastAPI sidecar and then packages it with Tauri. Packaged applications select a free loopback port automatically; users do not need Python or a manually started backend.
 
-## Safety and scope
+## Runtime architecture
 
-HydroPilot remains a demonstrator. It is not operational flood-control, reservoir-dispatch, emergency-warning, or engineering-design decision support.
+```text
+React + CesiumJS
+      │
+      │ Tauri HTTP / commands
+      ▼
+Tauri 2 (Rust)
+      │
+      ├─ OS credential store
+      ├─ desktop lifecycle
+      └─ PyInstaller FastAPI sidecar
+                 │
+                 ├─ water-network topology
+                 ├─ 0D reservoir model
+                 ├─ 1D Muskingum routing
+                 └─ LLM provider adapters
+```
+
+## GitHub Releases
+
+The Release workflow reads the application version from `apps/studio/package.json`. When a version does not yet have a published Release, GitHub Actions builds native Tauri packages for:
+
+- macOS Apple Silicon
+- macOS Intel
+- Windows x64
+- Linux x64
+
+A failed build leaves the Release as a draft so the same version can be repaired and retried. A Release is published only after all native jobs complete successfully.
+
+## V0.1 / V0.3 model scope
+
+HydroPilot deliberately layers model complexity:
+
+```text
+Reservoir     River network       Local floodplain
+   0D              1D                   2D
+balance  →     Muskingum      →    SFINCS adapter
+```
+
+SFINCS remains an isolated/manual regression capability while the interactive desktop demo focuses on the reservoir + directed-network + routing chain.

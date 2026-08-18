@@ -3,98 +3,79 @@ name: Desktop
 on:
   pull_request:
     paths:
-      - 'apps/desktop/**'
-      - 'apps/web/**'
+      - 'apps/studio/**'
       - 'apps/api/**'
       - 'packages/hydropilot-core/**'
       - 'data/demo/**'
-      - 'scripts/stage_desktop_api.py'
+      - 'scripts/dev_studio.py'
+      - 'scripts/build_tauri_sidecar.py'
       - '.github/workflows/desktop.yml'
   workflow_dispatch:
 
 jobs:
-  desktop-smoke:
+  visual-acceptance:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install backend
+        run: python -m pip install -e packages/hydropilot-core -e apps/api
+      - name: Start API
+        run: |
+          nohup env PYTHONPATH=apps/api/src:packages/hydropilot-core/src python -m uvicorn hydropilot_api.main:app --host 127.0.0.1 --port 8000 >/tmp/hydropilot-api.log 2>&1 &
+          for attempt in {1..30}; do curl -fsS http://127.0.0.1:8000/health >/dev/null && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8000/health
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Build API sidecar
+      - name: Install studio and Chromium
+        working-directory: apps/studio
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e packages/hydropilot-core -e apps/api pyinstaller
-          pyinstaller --clean --noconfirm --onefile --name hydropilot-api --paths apps/api/src --paths packages/hydropilot-core/src apps/api/desktop_entry.py
-          python scripts/stage_desktop_api.py
-      - name: Install renderer
-        run: npm --prefix apps/web install
-      - name: Install desktop shell
-        run: npm --prefix apps/desktop install
-      - name: Launch development Electron and verify source API
-        run: xvfb-run -a npm --prefix apps/desktop run dev:smoke
-      - name: Build Linux unpacked desktop app
+          npm install
+          npx playwright install --with-deps chromium
+      - name: Build and start React preview
+        run: |
+          npm --prefix apps/studio run build:web
+          nohup npm --prefix apps/studio run preview >/tmp/hydropilot-studio.log 2>&1 &
+          for attempt in {1..30}; do curl -fsS http://127.0.0.1:4173 >/dev/null && break; sleep 1; done
+      - name: Capture real React/Cesium runtime
+        working-directory: apps/studio
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm --prefix apps/desktop run pack
-      - name: Verify packaged resources
-        run: |
-          test -f apps/desktop/release/linux-unpacked/resources/web/index.html
-          test -x apps/desktop/release/linux-unpacked/resources/api/hydropilot-api
-          test -f apps/desktop/release/linux-unpacked/resources/data/demo/sacramento_v0_1.json
-      - name: Launch packaged Electron and verify Cesium
-        run: |
-          xvfb-run -a env HYDROPILOT_DESKTOP_SMOKE=1 \
-            apps/desktop/release/linux-unpacked/hydropilot \
-            --no-sandbox \
-            --ignore-gpu-blocklist \
-            --enable-webgl \
-            --use-angle=swiftshader \
-            --enable-unsafe-swiftshader
-
-  package-desktop:
-    if: github.event_name == 'workflow_dispatch'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-14
-            target: --mac
-            artifact: macos
-          - os: windows-latest
-            target: --win
-            artifact: windows
-          - os: ubuntu-latest
-            target: --linux
-            artifact: linux
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Build API sidecar
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e packages/hydropilot-core -e apps/api pyinstaller
-          pyinstaller --clean --noconfirm --onefile --name hydropilot-api --paths apps/api/src --paths packages/hydropilot-core/src apps/api/desktop_entry.py
-          python scripts/stage_desktop_api.py
-      - name: Install renderer
-        run: npm --prefix apps/web install
-      - name: Install desktop shell
-        run: npm --prefix apps/desktop install
-      - name: Build installer
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm --prefix apps/desktop run dist -- ${{ matrix.target }}
+          HYDROPILOT_WEB_URL: http://127.0.0.1:4173
+          SCREENSHOT_PATH: ${{ github.workspace }}/artifacts/hydropilot-react-tauri.png
+        run: node scripts/capture.mjs
       - uses: actions/upload-artifact@v4
         with:
-          name: hydropilot-desktop-${{ matrix.artifact }}
-          path: apps/desktop/release/*
+          name: hydropilot-react-tauri-acceptance
+          path: artifacts/hydropilot-react-tauri.png
           if-no-files-found: error
+          retention-days: 30
+
+  tauri-build-smoke:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install backend and sidecar build tools
+        run: python -m pip install -e packages/hydropilot-core -e apps/api pyinstaller
+      - name: Install React studio
+        working-directory: apps/studio
+        run: npm install
+      - name: Build target-specific API sidecar
+        working-directory: apps/studio
+        run: npm run sidecar
+      - name: Check Tauri Rust application
+        working-directory: apps/studio/src-tauri
+        run: cargo check --locked || cargo check
+      - name: Build unpackaged Tauri application
+        working-directory: apps/studio
+        run: npm run tauri -- build --debug --no-bundle
