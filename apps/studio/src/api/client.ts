@@ -2,7 +2,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import type { HydroObject, HydroState, NetworkPathItem } from '../types'
 
-let apiBase = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000'
+const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000'
+let apiBase = DEFAULT_API_BASE
+let apiBaseConfigured = false
 
 declare global {
   interface Window { __TAURI_INTERNALS__?: unknown }
@@ -39,9 +41,10 @@ function inTauri(): boolean {
 }
 
 export async function configureApiBase(): Promise<string> {
-  if (inTauri()) {
+  if (!apiBaseConfigured && inTauri()) {
     apiBase = await invoke<string>('api_base_url')
   }
+  apiBaseConfigured = true
   return apiBase
 }
 
@@ -73,6 +76,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function waitForApi(timeoutMs = 20_000): Promise<void> {
+  await configureApiBase()
   const started = Date.now()
   let lastError: unknown
   while (Date.now() - started < timeoutMs) {
