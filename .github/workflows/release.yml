@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: hydropilot-native-release
+  cancel-in-progress: true
+
 jobs:
   prepare-release:
     name: Resolve release version
@@ -42,7 +46,7 @@ jobs:
             IS_DRAFT="$(jq -r '.draft' <<<"$RELEASE_JSON")"
             if [[ "$IS_DRAFT" == "true" ]]; then
               echo "Removing stale draft release $TAG from the previous release workflow."
-              gh release delete "$TAG" --yes
+              gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
               SHOULD_RELEASE=true
             else
               SHOULD_RELEASE=false
@@ -82,6 +86,7 @@ jobs:
             artifact: linux-x64
             bundles: appimage,deb
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux Tauri dependencies
@@ -101,6 +106,9 @@ jobs:
       - name: Install React studio
         working-directory: apps/studio
         run: npm install
+      - name: Generate native icon set
+        working-directory: apps/studio
+        run: npm run icons
       - name: Build target-specific API sidecar
         working-directory: apps/studio
         run: npm run sidecar
