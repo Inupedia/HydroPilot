@@ -112,6 +112,19 @@ def test_release_request_requires_well_formed_inflow_boundary():
             max_hops=1,
         )
 
+    with pytest.raises(ValidationError):
+        ReleaseScenarioRequest(
+            reservoir_id="reservoir-alpha",
+            release_cms=100,
+            duration_minutes=50,
+            dt_minutes=30,
+            max_hops=1,
+            inflow_hydrograph=[
+                HydrographPoint(timestamp_minutes=0, flow_cms=20),
+                HydrographPoint(timestamp_minutes=60, flow_cms=40),
+            ],
+        )
+
     invalid_boundaries = [
         [
             HydrographPoint(timestamp_minutes=10, flow_cms=20),
