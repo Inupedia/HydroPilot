@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Entity, Viewer } from 'cesium'
-import Timeline from './components/Timeline'
+import Timeline, { type ScenePreviewMode } from './components/Timeline'
 import { hydroApi, waitForApi, type LlmProviderSummary } from './api/client'
 import { createHydroViewer, renderHydroScene } from './cesium/hydroViewer'
 import {
@@ -28,6 +28,9 @@ export default function App() {
   const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
   const [states, setStates] = useState<HydroState[]>([])
   const [timestamp, setTimestamp] = useState(0)
+  const [forecastStates, setForecastStates] = useState<HydroState[]>([])
+  const [forecastTimestamp, setForecastTimestamp] = useState(0)
+  const [sceneMode, setSceneMode] = useState<ScenePreviewMode>('forecast')
   const [releaseCms, setReleaseCms] = useState(2200)
   const [inflowCms, setInflowCms] = useState(1000)
   const [busyAction, setBusyAction] = useState('')
@@ -54,6 +57,12 @@ export default function App() {
     return visible.length ? Math.max(...visible.map((item) => item.value)) : null
   }, [states, timestamp])
   const storageState = states.find((item) => item.timestamp_minutes === timestamp && item.variable === 'storage')
+  const sceneUsesForecast = sceneMode === 'forecast' && forecastStates.length > 0
+  const sceneStates = sceneUsesForecast ? forecastStates : states
+  const sceneTimestamp = sceneUsesForecast ? forecastTimestamp : timestamp
+  const sceneStorage = sceneStates.find((item) => item.timestamp_minutes === sceneTimestamp && item.object_id === 'reservoir-shasta' && item.variable === 'storage')
+  const sceneFlows = sceneStates.filter((item) => item.timestamp_minutes === sceneTimestamp && item.variable === 'flow')
+  const scenePeakFlow = sceneFlows.length ? Math.max(...sceneFlows.map((item) => item.value)) : null
   const agentProviders = useMemo(() => agentCompatibleProviders(providers), [providers])
   const activeProvider = agentProviders.find((item) => item.id === selectedProvider)
   const providerNeedsKey = activeProvider?.auth_required ?? true
@@ -100,8 +109,8 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (viewerRef.current && objects.length) renderHydroScene(viewerRef.current, objects, highlightedIds, states, timestamp)
-  }, [objects, highlightedIds, states, timestamp])
+    if (viewerRef.current && objects.length) renderHydroScene(viewerRef.current, objects, highlightedIds, sceneStates, sceneTimestamp)
+  }, [objects, highlightedIds, sceneStates, sceneTimestamp])
 
   useEffect(() => { localStorage.setItem('hydropilot.llm.provider', selectedProvider) }, [selectedProvider])
   useEffect(() => { localStorage.setItem('hydropilot.llm.model', selectedModel) }, [selectedModel])
@@ -142,6 +151,7 @@ export default function App() {
       setStates(next)
       const nextTimes = [...new Set(next.map((item) => item.timestamp_minutes))].sort((a, b) => a - b)
       setTimestamp(nextTimes[0] ?? 0)
+      setSceneMode('scenario')
       status(`Scenario ready: ${nextTimes.length} time steps with explicit inflow and release schedules.`, 'success')
       return nextTimes.length
     } catch (error) { status(`Scenario failed: ${error instanceof Error ? error.message : String(error)}`, 'error'); throw error }
@@ -227,7 +237,7 @@ export default function App() {
             <label>Model<input value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} placeholder="Model ID"/></label>
             {selectedProvider === 'custom-openai' && <label>Base URL<input value={customBaseUrl} onChange={(event) => setCustomBaseUrl(event.target.value)} placeholder="https://example.com/v1"/></label>}
             {providerNeedsKey && <label>API key<input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" placeholder="Stored in the OS credential store"/></label>}
-            <div className="secret-row"><span>{providerNeedsKey ? secretState : 'No API key required'}</span>{providerNeedsKey && <button type="button" onClick={() => void saveApiKey()}>Save key</button>}</div>
+            <div className="secret-row"><span>{providerNeedsKey ? secretState : 'No saved key'}</span>{providerNeedsKey && <button type="button" onClick={() => void saveApiKey()}>Save key</button>}</div>
             <p className="helper">Copilot questions use the read-only Agent. Network highlighting and scenario execution remain explicit controls below.</p>
           </div>}
         </section>
@@ -237,7 +247,28 @@ export default function App() {
         <div className="status-card" data-testid="scenario-status"><span>Reservoir storage</span><strong>{storageState ? `${(storageState.value / 1e9).toFixed(2)} B m³` : 'Run scenario'}</strong></div>
         <div className="legend"><span><i className="legend-line river"/>River</span><span><i className="legend-dot reservoir"/>Reservoir</span><span><i className="legend-dot dam"/>Dam</span><span><i className="legend-dot gauge"/>Gauge</span><span><i className="legend-dot control"/>Control point</span></div>
       </aside>
-      <section className="map-stage"><div ref={mapHost} className="cesium-host" data-testid="cesium-host"/><div className="map-header"><div><span className="live-dot"/> CESIUM 3D / EPSG:4326</div><div>{objects.length} OBJECTS · PUBLIC DEMO DATA</div></div><div className="map-title-card"><span>Water-network digital twin</span><strong>Shasta → Sacramento control section</strong></div><Timeline timestamps={timestamps} timestamp={timestamp} inflowCms={inflowCms} releaseCms={releaseCms} onChange={(value) => setTimestamp(value)}/></section>
+      <section className="map-stage">
+        <div ref={mapHost} className="cesium-host" data-testid="cesium-host"/>
+        <div className="map-header"><div><span className="live-dot"/> CESIUM 3D / EPSG:4326</div><div>{objects.length} OBJECTS · PUBLIC DEMO DATA</div></div>
+        <div className="map-title-card"><span>Water-network digital twin</span><strong>Shasta → Sacramento control section</strong></div>
+        <div className={`scene-preview-hud ${sceneMode}`} data-testid="scene-preview-hud">
+          <span>3D PREPLAY</span>
+          <strong>{sceneUsesForecast ? 'FORECAST' : 'SCENARIO'} · T+{sceneTimestamp} MIN</strong>
+          <small>{sceneStorage ? `Storage ${(sceneStorage.value / 1e9).toFixed(3)} B m³` : 'No storage state'}{scenePeakFlow == null ? '' : ` · routed peak ${scenePeakFlow.toFixed(0)} m³/s`}</small>
+        </div>
+        <Timeline
+          timestamps={timestamps}
+          timestamp={timestamp}
+          inflowCms={inflowCms}
+          releaseCms={releaseCms}
+          forecastTimestamp={forecastTimestamp}
+          sceneMode={sceneMode}
+          onChange={setTimestamp}
+          onForecastStates={setForecastStates}
+          onForecastTimestampChange={setForecastTimestamp}
+          onSceneModeChange={setSceneMode}
+        />
+      </section>
     </main>
   )
 }
