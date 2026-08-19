@@ -196,7 +196,7 @@ def test_agent_executes_multiple_read_only_calls_from_one_round_in_call_order():
         tool_messages = [item for item in body["messages"] if item["role"] == "tool"]
         assert [item["tool_call_id"] for item in tool_messages] == ["call_1", "call_2"]
         assert json.loads(tool_messages[0]["content"])["id"] == "reservoir-alpha"
-        assert json.loads(tool_messages[1]["content"]) == []
+        assert json.loads(tool_messages[1]["content"]) == {"items": [], "limit": 50, "offset": 0, "total": 0}
         return assistant_text("The object exists and has no configured constraints.")
 
     result = run_read_only_agent(
