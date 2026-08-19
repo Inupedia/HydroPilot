@@ -9,9 +9,14 @@ def downstream_path(
     relations: list[HydroRelation],
     *,
     max_hops: int = 8,
+    max_results: int | None = None,
 ) -> list[NetworkPathItem]:
     if max_hops < 0:
         raise ValueError("max_hops must be non-negative")
+    if max_results is not None and max_results < 0:
+        raise ValueError("max_results must be non-negative")
+    if max_results == 0:
+        return []
 
     adjacency: dict[str, list[str]] = defaultdict(list)
     for relation in relations:
@@ -34,6 +39,8 @@ def downstream_path(
             visited.add(target)
             item = NetworkPathItem(object_id=target, hop=hop + 1)
             result.append(item)
+            if max_results is not None and len(result) >= max_results:
+                return result
             queue.append((target, hop + 1))
 
     return result
