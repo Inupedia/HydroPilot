@@ -56,6 +56,27 @@ def test_tool_execution_lists_compact_real_demo_reservoir_inventory():
     assert "properties" not in result["items"][0]
 
 
+def test_tool_execution_traces_bounded_real_demo_downstream_page():
+    response = client.post(
+        "/api/tools/execute",
+        json={
+            "name": "trace_downstream",
+            "arguments": {"object_id": "reach-001", "max_hops": 3, "limit": 2},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["result"] == {
+        "offset": 0,
+        "limit": 2,
+        "has_more": True,
+        "items": [
+            {"object_id": "reach-002", "hop": 1, "via_relation": "FLOWS_TO"},
+            {"object_id": "reach-003", "hop": 2, "via_relation": "FLOWS_TO"},
+        ],
+    }
+
+
 def test_tool_execution_can_read_honest_empty_demo_curve_and_constraint_catalogs():
     curves = client.post(
         "/api/tools/execute",
