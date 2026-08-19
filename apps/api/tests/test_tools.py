@@ -50,6 +50,19 @@ class ToolRepository:
         ]
         self.curves = [
             HydroCurve(
+                id="curve-area",
+                object_id="reservoir-alpha",
+                curve_type=CurveType.LEVEL_AREA,
+                x_unit="m",
+                y_unit="m2",
+                points=[
+                    HydroCurvePoint(x=100, y=50_000),
+                    HydroCurvePoint(x=110, y=60_000),
+                    HydroCurvePoint(x=120, y=70_000),
+                ],
+                source="test-area-source",
+            ),
+            HydroCurve(
                 id="curve-storage",
                 object_id="reservoir-alpha",
                 curve_type=CurveType.LEVEL_STORAGE,
@@ -59,8 +72,8 @@ class ToolRepository:
                     HydroCurvePoint(x=100, y=1_000_000),
                     HydroCurvePoint(x=110, y=1_200_000),
                 ],
-                source="test",
-            )
+                source="test-storage-source",
+            ),
         ]
         self.constraints = [
             HydroConstraint(
@@ -92,7 +105,7 @@ class ToolRepository:
             values = [item for item in values if item.object_id == object_id]
         if curve_type is not None:
             values = [item for item in values if item.curve_type is curve_type]
-        return values
+        return sorted(values, key=lambda item: item.id)
 
     def list_constraints(self, object_id=None, variable=None):
         values = self.constraints
@@ -202,26 +215,92 @@ def test_trace_downstream_tool_respects_hop_limit():
     assert result.result == [{"object_id": "reach-b", "hop": 1, "via_relation": "FLOWS_TO"}]
 
 
-def test_curve_and_constraint_tools_preserve_typed_filters():
+def test_list_curves_tool_returns_compact_paged_catalog_with_typed_filter():
     repo = ToolRepository()
 
-    curves = execute_tool(
+    all_curves = execute_tool(
+        repo,
+        HydroToolRequest(name="list_curves", arguments={"object_id": "reservoir-alpha"}),
+    )
+    storage = execute_tool(
         repo,
         HydroToolRequest(
             name="list_curves",
             arguments={"object_id": "reservoir-alpha", "curve_type": "level_storage"},
         ),
     )
-    constraints = execute_tool(
+
+    assert all_curves.result["offset"] == 0
+    assert all_curves.result["limit"] == 20
+    assert all_curves.result["total"] == 2
+    assert all_curves.result["items"] == [
+        {
+            "id": "curve-area",
+            "object_id": "reservoir-alpha",
+            "curve_type": "level_area",
+            "x_unit": "m",
+            "y_unit": "m2",
+            "point_count": 3,
+            "source": "test-area-source",
+        },
+        {
+            "id": "curve-storage",
+            "object_id": "reservoir-alpha",
+            "curve_type": "level_storage",
+            "x_unit": "m",
+            "y_unit": "m3",
+            "point_count": 2,
+            "source": "test-storage-source",
+        },
+    ]
+    assert all("points" not in item for item in all_curves.result["items"])
+    assert storage.result["total"] == 1
+    assert [item["id"] for item in storage.result["items"]] == ["curve-storage"]
+
+
+def test_list_curves_tool_paginates_and_bounds_limit():
+    repo = ToolRepository()
+
+    page = execute_tool(
         repo,
+        HydroToolRequest(
+            name="list_curves",
+            arguments={"object_id": "reservoir-alpha", "offset": 1, "limit": 1},
+        ),
+    )
+    beyond = execute_tool(
+        repo,
+        HydroToolRequest(
+            name="list_curves",
+            arguments={"object_id": "reservoir-alpha", "offset": 10, "limit": 2},
+        ),
+    )
+
+    assert page.result["offset"] == 1
+    assert page.result["limit"] == 1
+    assert page.result["total"] == 2
+    assert [item["id"] for item in page.result["items"]] == ["curve-storage"]
+    assert beyond.result == {"offset": 10, "limit": 2, "total": 2, "items": []}
+
+    with pytest.raises(ValidationError):
+        execute_tool(
+            repo,
+            HydroToolRequest(
+                name="list_curves",
+                arguments={"object_id": "reservoir-alpha", "limit": 51},
+            ),
+        )
+
+
+def test_constraint_tool_preserves_typed_filter():
+    constraints = execute_tool(
+        ToolRepository(),
         HydroToolRequest(
             name="list_constraints",
             arguments={"object_id": "reservoir-alpha", "variable": "level"},
         ),
     )
 
-    assert [item["id"] for item in curves.result] == ["curve-storage"]
-    assert curves.result[0]["curve_type"] == "level_storage"
     assert [item["id"] for item in constraints.result] == ["constraint-level"]
     assert constraints.result[0]["constraint_type"] == "maximum"
 
