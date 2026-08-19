@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { demoForecastHistory, forecastChartGeometry, formatArrival, polylinePoints } from '../src/components/forecastView'
+import { demoForecastHistory, demoRainfallForecast, forecastChartGeometry, formatArrival, polylinePoints } from '../src/components/forecastView'
 
 
 describe('forecast timeline helpers', () => {
@@ -9,6 +9,14 @@ describe('forecast timeline helpers', () => {
     expect(history.map((point) => point.timestamp_minutes)).toEqual([-90, -60, -30, 0])
     expect(history.at(-1)?.flow_cms).toBe(210)
     expect(history[0].flow_cms).toBeLessThan(history.at(-1)!.flow_cms)
+  })
+
+  it('builds a contiguous demo storm for rainfall-driven forecasting', () => {
+    const rainfall = demoRainfallForecast()
+
+    expect(rainfall.map((point) => point.timestamp_minutes)).toEqual([30, 60, 90, 120, 150, 180])
+    expect(rainfall.reduce((total, point) => total + point.precipitation_mm, 0)).toBe(34)
+    expect(Math.max(...rainfall.map((point) => point.precipitation_mm))).toBe(14)
   })
 
   it('keeps NOW as the join between observed and forecast lines', () => {
