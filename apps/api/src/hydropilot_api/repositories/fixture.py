@@ -4,7 +4,14 @@ import json
 from functools import lru_cache
 from pathlib import Path
 from .protocols import HydroRepository
-from hydropilot_api.domain import CurveType, HydroCurve, HydroObject, HydroRelation, ObjectType
+from hydropilot_api.domain import (
+    CurveType,
+    HydroConstraint,
+    HydroCurve,
+    HydroObject,
+    HydroRelation,
+    ObjectType,
+)
 
 
 class FixtureHydroRepository(HydroRepository):
@@ -14,6 +21,7 @@ class FixtureHydroRepository(HydroRepository):
         self.objects = [HydroObject.model_validate(item) for item in data["objects"]]
         self.relations = [HydroRelation.model_validate(item) for item in data["relations"]]
         self.curves = [HydroCurve.model_validate(item) for item in data.get("curves", [])]
+        self.constraints = [HydroConstraint.model_validate(item) for item in data.get("constraints", [])]
 
     def list_objects(self, object_type: ObjectType | None = None) -> list[HydroObject]:
         values = self.objects if object_type is None else [obj for obj in self.objects if obj.object_type == object_type]
@@ -36,6 +44,18 @@ class FixtureHydroRepository(HydroRepository):
         if curve_type is not None:
             values = [curve for curve in values if curve.curve_type is curve_type]
         return sorted(values, key=lambda curve: curve.id)
+
+    def list_constraints(
+        self,
+        object_id: str | None = None,
+        variable: str | None = None,
+    ) -> list[HydroConstraint]:
+        values = self.constraints
+        if object_id is not None:
+            values = [item for item in values if item.object_id == object_id]
+        if variable is not None:
+            values = [item for item in values if item.variable == variable]
+        return sorted(values, key=lambda item: item.id)
 
 
 @lru_cache
