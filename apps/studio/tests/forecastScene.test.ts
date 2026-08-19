@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { flowSceneVisual, forecastTimestamps, stateValueAt, storageSceneVisual } from '../src/cesium/forecastScene'
+import { controlRiskVisual, flowSceneVisual, forecastTimestamps, stateValueAt, storageSceneVisual } from '../src/cesium/forecastScene'
 import type { HydroState } from '../src/types'
 
 const states: HydroState[] = [
@@ -32,5 +32,17 @@ describe('forecast scene helpers', () => {
     expect(half.ratio).toBe(0.5)
     expect(full.columnHeightM).toBeGreaterThan(half.columnHeightM)
     expect(full.radiusScale).toBeGreaterThan(half.radiusScale)
+  })
+
+  it('maps control point flow thresholds into 3D warning and flood beacons', () => {
+    const normal = controlRiskVisual(2000, 2500, 3500)
+    const warning = controlRiskVisual(2800, 2500, 3500)
+    const flood = controlRiskVisual(3800, 2500, 3500)
+
+    expect(normal.risk).toBe('normal')
+    expect(warning.risk).toBe('warning')
+    expect(flood.risk).toBe('flood')
+    expect(warning.beaconHeightM).toBeGreaterThan(normal.beaconHeightM)
+    expect(flood.pulseRadiusM).toBeGreaterThan(warning.pulseRadiusM)
   })
 })

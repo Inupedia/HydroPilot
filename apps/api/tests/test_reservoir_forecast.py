@@ -71,6 +71,31 @@ def test_reservoir_storage_changes_but_level_is_not_invented_without_curve():
     assert result.summary.final_level_m is None
 
 
+def test_full_network_forecast_reaches_terminal_reach_and_control_point():
+    repo = FixtureHydroRepository(FIXTURE_PATH)
+    result = run_reservoir_rainfall_forecast(repo, request(max_hops=20))
+
+    terminal = sorted(
+        [state for state in result.scenario.states if state.object_id == "reach-020" and state.variable == "flow"],
+        key=lambda state: state.timestamp_minutes,
+    )
+    control = sorted(
+        [state for state in result.scenario.states if state.object_id == "control-sacramento" and state.variable == "flow"],
+        key=lambda state: state.timestamp_minutes,
+    )
+
+    assert terminal
+    assert [state.timestamp_minutes for state in control] == [state.timestamp_minutes for state in terminal]
+    assert [state.value for state in control] == pytest.approx([state.value for state in terminal])
+
+
+def test_reservoir_forecast_accepts_up_to_twenty_five_routing_hops():
+    assert request(max_hops=20).max_hops == 20
+    assert request(max_hops=25).max_hops == 25
+    with pytest.raises(ValidationError, match="25"):
+        request(max_hops=26)
+
+
 def test_reservoir_forecast_rejects_horizon_beyond_release_scenario_limit():
     with pytest.raises(ValidationError, match="1440"):
         request(

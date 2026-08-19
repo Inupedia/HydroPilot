@@ -64,7 +64,7 @@ export default function Timeline({
         runoff_coefficient: RUNOFF_COEFFICIENT,
         response_time_hours: RESPONSE_TIME_HOURS,
         baseflow_cms: inflowCms * 0.57,
-        max_hops: 12,
+        max_hops: 20,
       })
       if (version !== requestVersion.current) return
       const nextTimes = forecastTimestamps(nextForecast.scenario.states)
@@ -183,7 +183,7 @@ export default function Timeline({
       </div>
 
       <div className="cesium-preplay" data-testid="cesium-preplay">
-        <div className="cesium-preplay-heading"><strong>CESIUM 3D PREPLAY</strong><small>flow walls · glow ribbons · reservoir volume</small></div>
+        <div className="cesium-preplay-heading"><strong>CESIUM 3D PREPLAY</strong><small>20 reaches · control risk · storage volume</small></div>
         <div className="preplay-mode-switch" aria-label="3D scene mode">
           <button className={sceneMode === 'forecast' ? 'active' : ''} type="button" onClick={() => onSceneModeChange('forecast')}>Forecast</button>
           <button className={sceneMode === 'scenario' ? 'active' : ''} type="button" disabled={!hasScenario} onClick={() => { setForecastPlaying(false); onSceneModeChange('scenario') }}>Scenario</button>
