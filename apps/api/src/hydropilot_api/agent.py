@@ -39,6 +39,10 @@ READ_ONLY_AGENT_SYSTEM_PROMPT = (
     "because this Agent has no mutation capability."
 )
 
+MAX_AGENT_TOOL_RESULT_CHARS = 24_000
+MAX_AGENT_TOOL_ROUND_CHARS = 48_000
+MAX_AGENT_TOOL_TOTAL_CHARS = 96_000
+
 
 class ReadOnlyAgentRequest(ChatRequest):
     model_config = ConfigDict(extra="forbid")
@@ -106,6 +110,15 @@ def _tool_chat_request(
     )
 
 
+def _serialize_tool_result(result: Any) -> str:
+    return json.dumps(
+        result,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
 def run_read_only_agent(
     repo: HydroRepository,
     request: ReadOnlyAgentRequest,
@@ -125,6 +138,7 @@ def run_read_only_agent(
     executions: list[AgentToolExecution] = []
     provider_rounds = 0
     tool_rounds = 0
+    total_tool_result_chars = 0
 
     while True:
         response = tool_chat_round(
@@ -159,11 +173,36 @@ def run_read_only_agent(
             )
         )
 
+        round_tool_result_chars = 0
         for call in response.tool_calls:
             tool_response = execute_tool(
                 repo,
                 HydroToolRequest(name=call.name, arguments=call.arguments),
             )
+            serialized_result = _serialize_tool_result(tool_response.result)
+            result_chars = len(serialized_result)
+            if result_chars > MAX_AGENT_TOOL_RESULT_CHARS:
+                raise ValueError(
+                    f"read-only agent tool result exceeds {MAX_AGENT_TOOL_RESULT_CHARS} "
+                    f"character limit for {call.name}"
+                )
+
+            next_round_chars = round_tool_result_chars + result_chars
+            if next_round_chars > MAX_AGENT_TOOL_ROUND_CHARS:
+                raise ValueError(
+                    f"read-only agent tool results exceed {MAX_AGENT_TOOL_ROUND_CHARS} "
+                    "character limit for one agent round"
+                )
+
+            next_total_chars = total_tool_result_chars + result_chars
+            if next_total_chars > MAX_AGENT_TOOL_TOTAL_CHARS:
+                raise ValueError(
+                    f"read-only agent tool results exceed {MAX_AGENT_TOOL_TOTAL_CHARS} "
+                    "character limit for one agent run"
+                )
+
+            round_tool_result_chars = next_round_chars
+            total_tool_result_chars = next_total_chars
             executions.append(
                 AgentToolExecution(
                     call_id=call.id,
@@ -175,11 +214,6 @@ def run_read_only_agent(
             messages.append(
                 ToolResultMessage(
                     tool_call_id=call.id,
-                    content=json.dumps(
-                        tool_response.result,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    ),
+                    content=serialized_result,
                 )
             )
