@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections import defaultdict
+
 from pydantic import BaseModel, Field, model_validator
 from hydropilot_core.reservoir import ReservoirState, ReservoirStep, step_reservoir
 from hydropilot_core.routing import MuskingumParameters, route_muskingum
 from hydropilot_api.domain import HydroRelation, HydroState, RelationType
 from hydropilot_api.repositories.protocols import HydroRepository
-from hydropilot_api.topology import downstream_path
 
 
 class HydrographPoint(BaseModel):
@@ -85,6 +86,34 @@ def _release_reach_id(reservoir_id: str, relations: list[HydroRelation]) -> str:
     return targets[0]
 
 
+def _routing_chain_ids(start_id: str, relations: list[HydroRelation], *, max_hops: int) -> list[str]:
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for relation in relations:
+        if relation.relation_type is RelationType.FLOWS_TO:
+            adjacency[relation.source_id].add(relation.target_id)
+
+    chain = [start_id]
+    seen = {start_id}
+    current = start_id
+
+    for _ in range(max_hops):
+        targets = sorted(adjacency.get(current, set()))
+        if len(targets) > 1:
+            raise ValueError(f"branching FLOWS_TO topology is unsupported at {current}")
+        if not targets:
+            break
+
+        target = targets[0]
+        if target in seen:
+            raise ValueError(f"cyclic FLOWS_TO topology is unsupported at {target}")
+
+        chain.append(target)
+        seen.add(target)
+        current = target
+
+    return chain
+
+
 def _routing_parameters(repo: HydroRepository, object_id: str, *, dt_seconds: float) -> MuskingumParameters:
     reach = repo.get_object(object_id)
     if reach is None:
@@ -119,8 +148,7 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
     )
     relations = repo.list_relations()
     release_reach_id = _release_reach_id(request.reservoir_id, relations)
-    downstream = downstream_path(release_reach_id, relations, max_hops=request.max_hops)
-    routed_object_ids = [release_reach_id, *[item.object_id for item in downstream]]
+    routed_object_ids = _routing_chain_ids(release_reach_id, relations, max_hops=request.max_hops)
     timestamps = list(range(0, request.duration_minutes + request.dt_minutes, request.dt_minutes))
     dt_seconds = request.dt_minutes * 60
     sampled_inflow = [_sample_hydrograph(request.inflow_hydrograph, timestamp) for timestamp in timestamps]
