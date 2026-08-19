@@ -71,6 +71,62 @@ def test_reservoir_storage_changes_but_level_is_not_invented_without_curve():
     assert result.summary.final_level_m is None
 
 
+def test_fixed_release_remains_backward_compatible_when_response_fraction_is_zero():
+    repo = FixtureHydroRepository(FIXTURE_PATH)
+    result = run_reservoir_rainfall_forecast(repo, request(release_response_fraction=0))
+    release_states = [
+        state.value
+        for state in result.scenario.states
+        if state.object_id == "reservoir-shasta" and state.variable == "release"
+    ]
+
+    assert release_states
+    assert release_states == pytest.approx([1500] * len(release_states))
+    assert result.summary.peak_release_cms == pytest.approx(1500)
+    assert result.summary.release_response_fraction == 0
+
+
+def test_responsive_release_turns_rainfall_forecast_into_dynamic_downstream_wave():
+    repo = FixtureHydroRepository(FIXTURE_PATH)
+    result = run_reservoir_rainfall_forecast(
+        repo,
+        request(
+            max_hops=20,
+            release_response_fraction=0.65,
+            max_release_cms=4000,
+        ),
+    )
+
+    release_states = sorted(
+        [
+            state
+            for state in result.scenario.states
+            if state.object_id == "reservoir-shasta" and state.variable == "release"
+        ],
+        key=lambda state: state.timestamp_minutes,
+    )
+    first_reach = sorted(
+        [state for state in result.scenario.states if state.object_id == "reach-001" and state.variable == "flow"],
+        key=lambda state: state.timestamp_minutes,
+    )
+    control = sorted(
+        [state for state in result.scenario.states if state.object_id == "control-sacramento" and state.variable == "flow"],
+        key=lambda state: state.timestamp_minutes,
+    )
+
+    assert max(state.value for state in release_states) > 1500
+    assert max(state.value for state in release_states) <= 4000
+    assert len({round(state.value, 6) for state in first_reach}) > 1
+    assert len({round(state.value, 6) for state in control}) > 1
+    assert result.summary.peak_release_cms == pytest.approx(max(state.value for state in release_states))
+    assert result.summary.release_response_fraction == pytest.approx(0.65)
+
+
+def test_responsive_release_cap_cannot_be_lower_than_baseline_release():
+    with pytest.raises(ValidationError, match="max_release_cms"):
+        request(release_cms=1500, max_release_cms=1400)
+
+
 def test_full_network_forecast_reaches_terminal_reach_and_control_point():
     repo = FixtureHydroRepository(FIXTURE_PATH)
     result = run_reservoir_rainfall_forecast(repo, request(max_hops=20))
