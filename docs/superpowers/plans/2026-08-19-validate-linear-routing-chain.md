@@ -2,7 +2,8 @@
 
 ## File structure
 
-- `apps/api/tests/test_scenario.py` — RED/GREEN behavior for branching, cycles, hop limits, and linear order.
+- `apps/api/tests/test_scenario_topology.py` — RED/GREEN behavior for branching, cycles, and hop limits.
+- `apps/api/tests/test_scenario.py` — existing linear-order regression coverage remains authoritative.
 - `apps/api/src/hydropilot_api/services/scenario.py` — scenario-specific chain resolver.
 
 ## Task 1 — RED
@@ -11,7 +12,7 @@ Add tests proving:
 
 1. a branch from the receiving reach raises before `route_muskingum` is called;
 2. a downstream cycle raises before repeated routing;
-3. a linear chain preserves receiving-reach-first order;
+3. the existing linear chain preserves receiving-reach-first order;
 4. `max_hops` limits descendants while keeping hop 0.
 
 Expected state: branch tests fail because generic BFS descendants are currently serialized into one Muskingum chain.
