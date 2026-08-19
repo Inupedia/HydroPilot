@@ -25,6 +25,8 @@ const CHART_HEIGHT = 150
 const CATCHMENT_AREA_KM2 = 8000
 const RUNOFF_COEFFICIENT = 0.18
 const RESPONSE_TIME_HOURS = 8
+const RELEASE_RESPONSE_FRACTION = 0.65
+const MIN_FORECAST_RELEASE_CAP_CMS = 4000
 
 export default function Timeline({
   timestamps,
@@ -54,12 +56,15 @@ export default function Timeline({
       if (!Number.isFinite(releaseCms) || releaseCms < 0) throw new Error('reservoir release must be non-negative')
       const nextHistory = demoForecastHistory(inflowCms)
       const rainfall = demoRainfallForecast()
+      const releaseCapCms = Math.max(MIN_FORECAST_RELEASE_CAP_CMS, releaseCms)
       const nextForecast = await hydroApi.reservoirForecast({
         reservoir_id: 'reservoir-shasta',
         rainfall,
         dt_minutes: 30,
         initial_inflow_cms: inflowCms,
         release_cms: releaseCms,
+        release_response_fraction: RELEASE_RESPONSE_FRACTION,
+        max_release_cms: releaseCapCms,
         catchment_area_km2: CATCHMENT_AREA_KM2,
         runoff_coefficient: RUNOFF_COEFFICIENT,
         response_time_hours: RESPONSE_TIME_HOURS,
@@ -114,18 +119,19 @@ export default function Timeline({
   const levelStatus = reservoirSummary?.final_level_m == null ? 'level unavailable' : `level ${reservoirSummary.final_level_m.toFixed(2)} m`
   const nowLeft = geometry ? `${(geometry.nowX / CHART_WIDTH) * 100}%` : '33.3%'
   const rainfallMax = Math.max(1, ...(forecast?.runoff.runoff.map((point) => point.rainfall_mm) ?? [1]))
+  const releasePeakLabel = reservoirSummary ? `${reservoirSummary.peak_release_cms.toFixed(0)} m³/s peak release` : 'responsive release'
 
   return (
     <div className="timeline forecast-timeline" data-testid="timeline">
       <div className="forecast-topline">
         <div className="forecast-heading">
           <div>
-            <small>RAINFALL → RESERVOIR FORECAST · SHASTA</small>
-            <strong>Forecast inflow → storage under {releaseCms.toLocaleString()} m³/s release</strong>
+            <small>RAINFALL → RESERVOIR → ROUTED FLOOD WAVE</small>
+            <strong>Rainfall → inflow → responsive release → 20-reach Cesium preplay</strong>
           </div>
         </div>
         <span className={`forecast-badge ${forecastBusy ? 'loading' : ''}`}>
-          {forecastBusy ? 'Forecasting…' : forecast ? 'reservoir balance' : 'Unavailable'}
+          {forecastBusy ? 'Forecasting…' : forecast ? releasePeakLabel : 'Unavailable'}
         </span>
       </div>
 
@@ -150,7 +156,7 @@ export default function Timeline({
         <article className="forecast-stat reservoir-storage-stat">
           <span>3h reservoir storage</span>
           <strong>{reservoirSummary ? `${(reservoirSummary.final_storage_m3 / 1e9).toFixed(3)} B m³` : '—'}</strong>
-          <small>{storageChange ? `${storageChange} · ${levelStatus}` : 'no level-storage curve'}</small>
+          <small>{storageChange ? `${storageChange} · release ${releaseCms.toFixed(0)}→${reservoirSummary?.peak_release_cms.toFixed(0)} m³/s` : levelStatus}</small>
         </article>
       </div>
 
@@ -183,7 +189,7 @@ export default function Timeline({
       </div>
 
       <div className="cesium-preplay" data-testid="cesium-preplay">
-        <div className="cesium-preplay-heading"><strong>CESIUM 3D PREPLAY</strong><small>20 reaches · control risk · storage volume</small></div>
+        <div className="cesium-preplay-heading"><strong>CESIUM 3D PREPLAY</strong><small>dynamic release wave · 20 reaches · control risk</small></div>
         <div className="preplay-mode-switch" aria-label="3D scene mode">
           <button className={sceneMode === 'forecast' ? 'active' : ''} type="button" onClick={() => onSceneModeChange('forecast')}>Forecast</button>
           <button className={sceneMode === 'scenario' ? 'active' : ''} type="button" disabled={!hasScenario} onClick={() => { setForecastPlaying(false); onSceneModeChange('scenario') }}>Scenario</button>
@@ -206,7 +212,7 @@ export default function Timeline({
 
       <div className="forecast-legend-row">
         <div className="forecast-series-legend"><span><i/>Demo pre-NOW inflow</span><span><i className="predicted"/>Rainfall-driven inflow</span></div>
-        <span className="forecast-provenance">Demo rainfall + uncalibrated basin assumptions ({CATCHMENT_AREA_KM2.toLocaleString()} km² · C={RUNOFF_COEFFICIENT} · K={RESPONSE_TIME_HOURS}h). Pre-NOW history is scaled from the explicit inflow boundary. No reservoir level is forecast without a level-storage curve.</span>
+        <span className="forecast-provenance">Demo rainfall + uncalibrated basin assumptions ({CATCHMENT_AREA_KM2.toLocaleString()} km² · C={RUNOFF_COEFFICIENT} · K={RESPONSE_TIME_HOURS}h). Forecast release is an explicit demo policy: baseline + {(RELEASE_RESPONSE_FRACTION * 100).toFixed(0)}% of positive excess inflow, capped at at least {MIN_FORECAST_RELEASE_CAP_CMS.toLocaleString()} m³/s. Not an operational dispatch recommendation.</span>
       </div>
 
       {hasScenario ? (
@@ -227,7 +233,7 @@ export default function Timeline({
         </div>
       ) : (
         <div className="forecast-scenario-row scenario-empty">
-          <span>Reservoir forecast is live · run the explicit scenario to enable 0D + 1D playback.</span>
+          <span>Forecast uses the demo responsive-release policy · run the explicit scenario for fixed-release playback.</span>
           <button className="forecast-refresh" type="button" disabled={forecastBusy} onClick={() => void loadForecast()}>
             {forecastBusy ? 'Refreshing…' : 'Refresh reservoir forecast'}
           </button>
