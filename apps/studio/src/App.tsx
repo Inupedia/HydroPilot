@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Entity, Viewer } from 'cesium'
 import Timeline from './components/Timeline'
-import { hydroApi, waitForApi, type LlmChatMessage, type LlmProviderSummary } from './api/client'
+import { hydroApi, waitForApi, type AgentChatMessage, type LlmProviderSummary } from './api/client'
 import { createHydroViewer, renderHydroScene } from './cesium/hydroViewer'
-import { parseCopilotCommand } from './copilot/commands'
+import { agentCompatibleProviders, buildReadOnlyAgentMessages } from './copilot/agent'
 import { secrets } from './platform/secrets'
 import type { HydroObject, HydroState } from './types'
 
 const examples = [
-  '高亮这条水网的下游链路',
-  '按 2200 m³/s 运行下泄调度场景',
-  '解释当前水网里有哪些工程对象',
+  '这条水网从 reach-001 往下游连接了哪些对象？',
+  '当前水网里有哪些工程对象？',
+  'reservoir-shasta 有哪些工程曲线和运行约束？',
 ]
 
 type Tone = 'idle' | 'working' | 'success' | 'error'
@@ -36,8 +36,8 @@ export default function App() {
   const [secretState, setSecretState] = useState('')
   const [copilotPrompt, setCopilotPrompt] = useState('')
   const [copilotBusy, setCopilotBusy] = useState(false)
-  const [copilotMessages, setCopilotMessages] = useState<LlmChatMessage[]>([
-    { role: 'assistant', content: 'Start with a suggested command. Map-control commands work before you configure an LLM.' },
+  const [copilotMessages, setCopilotMessages] = useState<AgentChatMessage[]>([
+    { role: 'assistant', content: 'Ask about objects, downstream topology, curves, or constraints. Highlighting and scenario execution remain explicit controls below.' },
   ])
 
   const riverCount = useMemo(() => objects.filter((item) => item.object_type === 'river_reach').length, [objects])
@@ -48,9 +48,10 @@ export default function App() {
     return visible.length ? Math.max(...visible.map((item) => item.value)) : null
   }, [states, timestamp])
   const storageState = states.find((item) => item.timestamp_minutes === timestamp && item.variable === 'storage')
-  const activeProvider = providers.find((item) => item.id === selectedProvider)
+  const agentProviders = useMemo(() => agentCompatibleProviders(providers), [providers])
+  const activeProvider = agentProviders.find((item) => item.id === selectedProvider)
   const providerNeedsKey = activeProvider?.auth_required ?? true
-  const providerReady = Boolean(selectedModel.trim()) && (selectedProvider !== 'custom-openai' || Boolean(customBaseUrl.trim())) && (!providerNeedsKey || Boolean(apiKey.trim()))
+  const providerReady = Boolean(activeProvider) && Boolean(selectedModel.trim()) && (selectedProvider !== 'custom-openai' || Boolean(customBaseUrl.trim())) && (!providerNeedsKey || Boolean(apiKey.trim()))
 
   const status = useCallback((message: string, tone: Tone = 'idle') => { setActionStatus(message); setActionTone(tone) }, [])
   const loadApiKey = useCallback(async (providerId: string) => {
@@ -72,11 +73,18 @@ export default function App() {
         if (cancelled) return
         setObjects(nextObjects)
         setProviders(nextProviders)
-        const valid = nextProviders.some((item) => item.id === selectedProvider)
-        const providerId = valid ? selectedProvider : (nextProviders[0]?.id ?? selectedProvider)
+        const nextAgentProviders = agentCompatibleProviders(nextProviders)
+        const valid = nextAgentProviders.some((item) => item.id === selectedProvider)
+        const providerId = valid ? selectedProvider : (nextAgentProviders[0]?.id ?? '')
+        if (!providerId) {
+          setSelectedProvider('')
+          setSelectedModel('')
+          setSecretState('No Agent-compatible provider available')
+          return
+        }
         if (!valid) setSelectedProvider(providerId)
-        const provider = nextProviders.find((item) => item.id === providerId)
-        if (!selectedModel && provider?.model_examples.length) setSelectedModel(provider.model_examples[0])
+        const provider = nextAgentProviders.find((item) => item.id === providerId)
+        if (!valid || !selectedModel.trim()) setSelectedModel(provider?.model_examples[0] ?? '')
         await loadApiKey(providerId)
       } catch (error) {
         status(`Startup error: ${error instanceof Error ? error.message : String(error)}`, 'error')
@@ -136,7 +144,7 @@ export default function App() {
 
   async function selectProvider(providerId: string) {
     setSelectedProvider(providerId)
-    const provider = providers.find((item) => item.id === providerId)
+    const provider = agentProviders.find((item) => item.id === providerId)
     setSelectedModel(provider?.model_examples[0] ?? '')
     await loadApiKey(providerId)
   }
@@ -158,18 +166,29 @@ export default function App() {
     if (!prompt || copilotBusy) return
     setCopilotPrompt(''); addMessage('user', prompt); setCopilotBusy(true)
     try {
-      const command = parseCopilotCommand(prompt)
-      if (command.type === 'highlight-downstream') {
-        const count = await highlightDownstream(); addMessage('assistant', `Done. I highlighted ${count} objects in the downstream chain.`); return
-      }
-      if (command.type === 'run-release') {
-        setReleaseCms(command.releaseCms); await runScenario(command.releaseCms); addMessage('assistant', `Done. I ran the ${command.releaseCms.toLocaleString()} m³/s release schedule against the current ${inflowCms.toLocaleString()} m³/s inflow boundary. Drag the timeline to inspect propagation.`); return
-      }
       if (!providerReady) {
-        setProviderSettingsOpen(true); addMessage('assistant', 'This question needs an LLM. Choose a provider, model, and API key first. Map-control commands work without an LLM.'); return
+        setProviderSettingsOpen(true)
+        addMessage('assistant', 'The read-only Agent needs an OpenAI-compatible provider, model, and any required credentials. Scenario actions remain available through the explicit controls below.')
+        return
       }
-      const system = `You are HydroPilot, a concise water-network GIS copilot. This is a public-data demonstrator, not operational flood-control decision support. Current scene: ${objects.length} objects, ${riverCount} river reaches, ${assetCount} engineering assets. Current scenario time: ${timestamp} minutes. Manual reservoir inflow boundary: ${inflowCms} m3/s. Manual reservoir release schedule: ${releaseCms} m3/s constant. ${currentFlow == null ? 'No routing scenario is active.' : `Peak visible flow is ${currentFlow.toFixed(0)} m3/s.`}`
-      const response = await hydroApi.llmChat({ provider: selectedProvider, model: selectedModel.trim(), api_key: apiKey.trim() || undefined, base_url: customBaseUrl.trim() || undefined, messages: [{ role: 'system', content: system }, ...copilotMessages.slice(-5).filter((message) => message.role !== 'system'), { role: 'user', content: prompt }], temperature: 0.2, max_tokens: 1200 })
+      const response = await hydroApi.agentChat({
+        provider: selectedProvider,
+        model: selectedModel.trim(),
+        api_key: apiKey.trim() || undefined,
+        base_url: customBaseUrl.trim() || undefined,
+        messages: buildReadOnlyAgentMessages(copilotMessages, prompt, {
+          objectCount: objects.length,
+          riverCount,
+          assetCount,
+          timestampMinutes: timestamp,
+          inflowCms,
+          releaseCms,
+          peakVisibleFlowCms: currentFlow,
+        }),
+        temperature: 0.2,
+        max_tokens: 1200,
+        max_tool_rounds: 4,
+      })
       addMessage('assistant', response.text)
     } catch (error) { addMessage('assistant', `Request failed: ${error instanceof Error ? error.message : String(error)}`) }
     finally { setCopilotBusy(false) }
@@ -179,24 +198,24 @@ export default function App() {
     <main className="app-shell">
       <aside className="control-panel">
         <div className="brand-row"><div className="brand-mark">HP</div><div><p className="eyebrow">HydroPilot v0.3.0 · Tauri</p><h1>Sacramento<br/>Water Network</h1></div></div>
-        <p className="note">React + Tauri water-network digital twin. Start with a guided command; every action reports what changed.</p>
+        <p className="note">React + Tauri water-network digital twin. Ask read-only questions above or use the explicit topology and scenario controls below.</p>
         <div className="metric-grid">
           <article><span>River reaches</span><strong>{riverCount}</strong></article><article><span>Engineering assets</span><strong>{assetCount}</strong></article>
           <article><span>Scenario time</span><strong>{timestamp} min</strong></article><article><span>Peak visible flow</span><strong>{currentFlow == null ? '—' : `${currentFlow.toFixed(0)} m³/s`}</strong></article>
         </div>
         <section className="copilot-card" data-testid="copilot-panel">
-          <div className="section-heading-row"><div><span className="section-kicker">AI COPILOT</span><h2>Tell the map what to do</h2></div><span className={`provider-badge ${providerReady ? 'ready' : ''}`}>{providerReady ? activeProvider?.name || 'Ready' : 'Model setup'}</span></div>
+          <div className="section-heading-row"><div><span className="section-kicker">AI COPILOT</span><h2>Ask the water network</h2></div><span className={`provider-badge ${providerReady ? 'ready' : ''}`}>{providerReady ? activeProvider?.name || 'Ready' : 'Model setup'}</span></div>
           <div className="quick-prompts">{examples.map((example) => <button key={example} type="button" onClick={() => void submitCopilot(example)}>{example}</button>)}</div>
           <div className="copilot-thread" aria-live="polite">{copilotMessages.slice(-4).map((message, index) => <div key={index} className={`copilot-message ${message.role}`}><span>{message.role === 'assistant' ? 'HP' : 'YOU'}</span><p>{message.content}</p></div>)}</div>
-          <form className="copilot-compose" onSubmit={(event) => { event.preventDefault(); void submitCopilot() }}><textarea rows={2} value={copilotPrompt} onChange={(event) => setCopilotPrompt(event.target.value)} placeholder="例如：按 2600 m³/s 跑一次调度，或者问当前水网有什么对象"/><button className="send-button" type="submit" disabled={copilotBusy || !copilotPrompt.trim()}>{copilotBusy ? 'Working…' : 'Send'}</button></form>
+          <form className="copilot-compose" onSubmit={(event) => { event.preventDefault(); void submitCopilot() }}><textarea rows={2} value={copilotPrompt} onChange={(event) => setCopilotPrompt(event.target.value)} placeholder="例如：reach-001 下游有哪些对象？或 reservoir-shasta 有哪些运行约束？"/><button className="send-button" type="submit" disabled={copilotBusy || !copilotPrompt.trim()}>{copilotBusy ? 'Working…' : 'Send'}</button></form>
           <button className="settings-toggle" type="button" onClick={() => setProviderSettingsOpen((value) => !value)}>{providerSettingsOpen ? 'Hide model settings' : 'Model settings'}</button>
           {providerSettingsOpen && <div className="provider-settings">
-            <label>Provider<select value={selectedProvider} onChange={(event) => void selectProvider(event.target.value)}>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
+            <label>Provider<select value={selectedProvider} onChange={(event) => void selectProvider(event.target.value)}>{agentProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
             <label>Model<input value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} placeholder="Model ID"/></label>
             {selectedProvider === 'custom-openai' && <label>Base URL<input value={customBaseUrl} onChange={(event) => setCustomBaseUrl(event.target.value)} placeholder="https://example.com/v1"/></label>}
             {providerNeedsKey && <label>API key<input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" placeholder="Stored in the OS credential store"/></label>}
             <div className="secret-row"><span>{providerNeedsKey ? secretState : 'No API key required'}</span>{providerNeedsKey && <button type="button" onClick={() => void saveApiKey()}>Save key</button>}</div>
-            <p className="helper">Map commands work locally. General questions use the selected LLM provider.</p>
+            <p className="helper">Copilot questions use the read-only Agent. Network highlighting and scenario execution remain explicit controls below.</p>
           </div>}
         </section>
         <div className={`action-feedback ${actionTone}`} data-testid="action-feedback"><span className="feedback-dot"/><p>{actionStatus}</p></div>

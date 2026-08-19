@@ -35,6 +35,30 @@ export interface LlmChatResponse {
   text: string
   usage?: Record<string, unknown> | null
 }
+export interface AgentChatMessage { role: 'user' | 'assistant'; content: string }
+export interface AgentChatRequest {
+  provider: string
+  model: string
+  messages: AgentChatMessage[]
+  api_key?: string
+  base_url?: string
+  temperature?: number
+  max_tokens?: number
+  max_tool_rounds?: number
+}
+export interface AgentToolExecution {
+  call_id: string
+  name: string
+  arguments: Record<string, unknown>
+  result: unknown
+}
+export interface AgentChatResponse {
+  provider: string
+  model: string
+  text: string
+  tool_executions: AgentToolExecution[]
+  provider_rounds: number
+}
 export interface ScenarioHydrographPoint {
   timestamp_minutes: number
   flow_cms: number
@@ -112,4 +136,5 @@ export const hydroApi = {
   },
   llmProviders: () => getJson<LlmProviderSummary[]>('/api/llm/providers'),
   llmChat: (request: LlmChatRequest) => postJson<LlmChatResponse>('/api/llm/chat', request),
+  agentChat: (request: AgentChatRequest) => postJson<AgentChatResponse>('/api/agent/chat', request),
 }
