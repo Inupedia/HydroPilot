@@ -27,6 +27,7 @@ READ_ONLY_AGENT_TOOL_NAMES = (
     "get_object",
     "list_constraints",
     "list_curves",
+    "list_objects",
     "trace_downstream",
 )
 
