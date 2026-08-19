@@ -27,7 +27,7 @@ function compactArgumentValue(value: unknown): string {
   let rendered: string
   if (typeof value === 'string') rendered = value
   else if (value === null || typeof value === 'number' || typeof value === 'boolean') rendered = String(value)
-  else rendered = JSON.stringify(value)
+  else rendered = JSON.stringify(value) ?? String(value)
 
   const limit = 56
   return rendered.length <= limit ? rendered : `${rendered.slice(0, limit - 1)}…`
