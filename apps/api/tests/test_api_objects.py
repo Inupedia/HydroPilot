@@ -64,6 +64,8 @@ def test_release_scenario_persists_computed_state_shape():
     assert body["scenario_id"] == "scenario-release"
     variables = {state["variable"] for state in body["states"]}
     assert {"storage", "inflow", "release", "flow"}.issubset(variables)
+    flow_objects = {state["object_id"] for state in body["states"] if state["variable"] == "flow"}
+    assert {"reach-001", "reach-002"}.issubset(flow_objects)
 
 
 def test_release_scenario_remains_stable_across_supported_network_depth():
@@ -79,5 +81,5 @@ def test_release_scenario_remains_stable_across_supported_network_depth():
     )
     assert response.status_code == 200
     flow_states = [state for state in response.json()["states"] if state["variable"] == "flow"]
-    assert {state["object_id"] for state in flow_states} >= {"reach-002", "reach-007", "reach-013"}
+    assert {state["object_id"] for state in flow_states} >= {"reach-001", "reach-002", "reach-007", "reach-013"}
     assert all(state["value"] >= 0 for state in flow_states)
