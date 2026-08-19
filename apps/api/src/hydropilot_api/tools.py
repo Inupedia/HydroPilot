@@ -42,6 +42,25 @@ class TraceDownstreamArgs(BaseModel):
 class ListCurvesArgs(BaseModel):
     object_id: str = Field(min_length=1)
     curve_type: CurveType | None = None
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class CurveInventoryItem(BaseModel):
+    id: str
+    object_id: str
+    curve_type: CurveType
+    x_unit: str
+    y_unit: str
+    point_count: int
+    source: str
+
+
+class CurveInventoryPage(BaseModel):
+    offset: int
+    limit: int
+    total: int
+    items: list[CurveInventoryItem]
 
 
 class ListConstraintsArgs(BaseModel):
@@ -117,7 +136,25 @@ def _trace_downstream(repo: HydroRepository, args: BaseModel):
 def _list_curves(repo: HydroRepository, args: BaseModel):
     values = ListCurvesArgs.model_validate(args)
     _require_object(repo, values.object_id)
-    return repo.list_curves(object_id=values.object_id, curve_type=values.curve_type)
+    curves = repo.list_curves(object_id=values.object_id, curve_type=values.curve_type)
+    selected = curves[values.offset : values.offset + values.limit]
+    return CurveInventoryPage(
+        offset=values.offset,
+        limit=values.limit,
+        total=len(curves),
+        items=[
+            CurveInventoryItem(
+                id=item.id,
+                object_id=item.object_id,
+                curve_type=item.curve_type,
+                x_unit=item.x_unit,
+                y_unit=item.y_unit,
+                point_count=len(item.points),
+                source=item.source,
+            )
+            for item in selected
+        ],
+    )
 
 
 def _list_constraints(repo: HydroRepository, args: BaseModel):
@@ -150,7 +187,7 @@ _REGISTRY: dict[str, _ToolRegistration] = {
         handler=_list_constraints,
     ),
     "list_curves": _ToolRegistration(
-        description="List engineering curves for one water-network object.",
+        description="List a bounded page of compact engineering-curve metadata for one water-network object.",
         args_model=ListCurvesArgs,
         handler=_list_curves,
     ),
