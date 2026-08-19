@@ -1,4 +1,6 @@
 from fastapi.testclient import TestClient
+
+import hydropilot_api.main as main_module
 from hydropilot_api.main import app
 
 client = TestClient(app)
@@ -9,6 +11,17 @@ def constant_hydrograph(flow_cms: float, duration_minutes: int) -> list[dict[str
         {"timestamp_minutes": 0, "flow_cms": flow_cms},
         {"timestamp_minutes": duration_minutes, "flow_cms": flow_cms},
     ]
+
+
+def scenario_payload(*, reservoir_id: str = "reservoir-shasta") -> dict:
+    return {
+        "reservoir_id": reservoir_id,
+        "duration_minutes": 60,
+        "dt_minutes": 30,
+        "max_hops": 2,
+        "inflow_hydrograph": constant_hydrograph(500, 60),
+        "release_hydrograph": constant_hydrograph(900, 60),
+    }
 
 
 def test_list_objects_supports_type_filter():
@@ -48,17 +61,30 @@ def test_release_scenario_requires_explicit_inflow_and_release_boundaries():
     assert missing_inflow.status_code == 422
 
 
-def test_release_scenario_persists_computed_state_shape():
+def test_release_scenario_maps_service_validation_error_to_422(monkeypatch):
+    def reject_scenario(repo, request):
+        raise ValueError("branching FLOWS_TO topology is unsupported at reach-001")
+
+    monkeypatch.setattr(main_module, "run_release_scenario", reject_scenario)
+
+    response = client.post("/api/scenarios/release", json=scenario_payload())
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "branching FLOWS_TO topology is unsupported at reach-001"}
+
+
+def test_release_scenario_missing_reservoir_remains_404():
     response = client.post(
         "/api/scenarios/release",
-        json={
-            "duration_minutes": 60,
-            "dt_minutes": 30,
-            "max_hops": 2,
-            "inflow_hydrograph": constant_hydrograph(500, 60),
-            "release_hydrograph": constant_hydrograph(900, 60),
-        },
+        json=scenario_payload(reservoir_id="reservoir-missing"),
     )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "object not found: reservoir-missing"}
+
+
+def test_release_scenario_persists_computed_state_shape():
+    response = client.post("/api/scenarios/release", json=scenario_payload())
     assert response.status_code == 200
     body = response.json()
     assert body["scenario_id"] == "scenario-release"
