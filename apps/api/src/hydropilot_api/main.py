@@ -58,6 +58,8 @@ def release_scenario(request: ReleaseScenarioRequest) -> ReleaseScenarioResponse
         return run_release_scenario(repo(), request)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"object not found: {exc.args[0]}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/llm/providers", response_model=list[ProviderSummary])
