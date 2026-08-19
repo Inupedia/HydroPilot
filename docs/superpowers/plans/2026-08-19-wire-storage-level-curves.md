@@ -6,8 +6,9 @@
 - `apps/api/src/hydropilot_api/repositories/fixture.py` — parse optional curves and filter them.
 - `apps/api/src/hydropilot_api/services/scenario.py` — adapt domain level-storage curve to the core solver.
 - `apps/api/tests/test_fixture.py` — prove old fixtures remain valid and curve filtering works.
-- `apps/api/tests/test_scenario.py` — prove reservoir level follows repository engineering data.
-- `apps/api/tests/test_scenario_topology.py` — update in-memory repository to satisfy the expanded contract.
+- `apps/api/tests/test_scenario_curves.py` — prove reservoir level follows repository engineering data and invalid curve configurations fail.
+- `apps/api/tests/test_scenario.py` — update the existing in-memory repository to satisfy the expanded contract.
+- `apps/api/tests/test_scenario_topology.py` — update the topology test repository to satisfy the expanded contract.
 
 ## Task 1 — RED repository tests
 
