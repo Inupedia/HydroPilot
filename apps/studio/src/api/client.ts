@@ -97,13 +97,16 @@ export async function waitForApi(timeoutMs = 20_000): Promise<void> {
 export const hydroApi = {
   objects: () => getJson<HydroObject[]>('/api/objects'),
   downstream: (id: string, maxHops = 8) => getJson<NetworkPathItem[]>(`/api/network/${id}/downstream?max_hops=${maxHops}`),
-  async releaseScenario(release_cms: number, inflow_hydrograph: ScenarioHydrographPoint[]): Promise<HydroState[]> {
+  async releaseScenario(
+    inflow_hydrograph: ScenarioHydrographPoint[],
+    release_hydrograph: ScenarioHydrographPoint[],
+  ): Promise<HydroState[]> {
     const result = await postJson<{ states: HydroState[] }>('/api/scenarios/release', {
-      release_cms,
       duration_minutes: 180,
       dt_minutes: 30,
       max_hops: 6,
       inflow_hydrograph,
+      release_hydrograph,
     })
     return result.states
   },
