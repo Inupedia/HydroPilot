@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { hydroApi, type FlowObservation, type ReservoirRainfallForecastResponse } from '../api/client'
 import { demoForecastHistory, demoRainfallForecast, forecastChartGeometry, formatArrival, polylinePoints } from './forecastView'
 import './forecast.css'
@@ -18,12 +18,14 @@ const RUNOFF_COEFFICIENT = 0.18
 const RESPONSE_TIME_HOURS = 8
 
 export default function Timeline({ timestamps, timestamp, inflowCms, releaseCms, onChange }: TimelineProps) {
+  const requestVersion = useRef(0)
   const [history, setHistory] = useState<FlowObservation[]>([])
   const [forecast, setForecast] = useState<ReservoirRainfallForecastResponse | null>(null)
   const [forecastBusy, setForecastBusy] = useState(false)
   const [forecastError, setForecastError] = useState('')
 
   const loadForecast = useCallback(async () => {
+    const version = ++requestVersion.current
     setForecastBusy(true)
     setForecastError('')
     try {
@@ -43,12 +45,14 @@ export default function Timeline({ timestamps, timestamp, inflowCms, releaseCms,
         baseflow_cms: inflowCms * 0.57,
         max_hops: 6,
       })
+      if (version !== requestVersion.current) return
       setHistory(nextHistory)
       setForecast(nextForecast)
     } catch (error) {
+      if (version !== requestVersion.current) return
       setForecastError(error instanceof Error ? error.message : String(error))
     } finally {
-      setForecastBusy(false)
+      if (version === requestVersion.current) setForecastBusy(false)
     }
   }, [inflowCms, releaseCms])
 
@@ -67,6 +71,7 @@ export default function Timeline({ timestamps, timestamp, inflowCms, releaseCms,
   const reservoirSummary = forecast?.summary
   const peakChange = runoffSummary?.peak_change_pct == null ? null : `${runoffSummary.peak_change_pct >= 0 ? '+' : ''}${runoffSummary.peak_change_pct.toFixed(1)}% vs now`
   const storageChange = reservoirSummary?.storage_change_pct == null ? null : `${reservoirSummary.storage_change_pct >= 0 ? '+' : ''}${reservoirSummary.storage_change_pct.toFixed(2)}%`
+  const levelStatus = reservoirSummary?.final_level_m == null ? 'level unavailable' : `level ${reservoirSummary.final_level_m.toFixed(2)} m`
   const nowLeft = geometry ? `${(geometry.nowX / CHART_WIDTH) * 100}%` : '33.3%'
   const rainfallMax = Math.max(1, ...(forecast?.runoff.runoff.map((point) => point.rainfall_mm) ?? [1]))
 
@@ -105,7 +110,7 @@ export default function Timeline({ timestamps, timestamp, inflowCms, releaseCms,
         <article className="forecast-stat reservoir-storage-stat">
           <span>3h reservoir storage</span>
           <strong>{reservoirSummary ? `${(reservoirSummary.final_storage_m3 / 1e9).toFixed(3)} B m³` : '—'}</strong>
-          <small>{storageChange ? `${storageChange} · level unavailable` : 'no level-storage curve'}</small>
+          <small>{storageChange ? `${storageChange} · ${levelStatus}` : 'no level-storage curve'}</small>
         </article>
       </div>
 
