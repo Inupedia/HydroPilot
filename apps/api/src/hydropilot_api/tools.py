@@ -5,13 +5,17 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
-from hydropilot_api.domain import CurveType
+from hydropilot_api.domain import CurveType, ObjectType
 from hydropilot_api.repositories.protocols import HydroRepository
 from hydropilot_api.topology import downstream_path
 
 
 class GetObjectArgs(BaseModel):
     object_id: str = Field(min_length=1)
+
+
+class ListObjectsArgs(BaseModel):
+    object_type: ObjectType | None = None
 
 
 class TraceDownstreamArgs(BaseModel):
@@ -68,6 +72,11 @@ def _get_object(repo: HydroRepository, args: BaseModel):
     return _require_object(repo, values.object_id)
 
 
+def _list_objects(repo: HydroRepository, args: BaseModel):
+    values = ListObjectsArgs.model_validate(args)
+    return repo.list_objects(values.object_type)
+
+
 def _trace_downstream(repo: HydroRepository, args: BaseModel):
     values = TraceDownstreamArgs.model_validate(args)
     _require_object(repo, values.object_id)
@@ -113,6 +122,11 @@ _REGISTRY: dict[str, _ToolRegistration] = {
         description="List engineering curves for one water-network object.",
         args_model=ListCurvesArgs,
         handler=_list_curves,
+    ),
+    "list_objects": _ToolRegistration(
+        description="List water-network objects, optionally filtered by typed object category.",
+        args_model=ListObjectsArgs,
+        handler=_list_objects,
     ),
     "trace_downstream": _ToolRegistration(
         description="Trace downstream FLOWS_TO relationships from one water-network object.",
