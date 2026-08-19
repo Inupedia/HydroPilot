@@ -92,6 +92,8 @@ def test_release_scenario_persists_computed_state_shape():
     assert {"storage", "inflow", "release", "flow"}.issubset(variables)
     flow_objects = {state["object_id"] for state in body["states"] if state["variable"] == "flow"}
     assert {"reach-001", "reach-002"}.issubset(flow_objects)
+    assert body["violations"] == []
+    assert body["unevaluated_constraints"] == []
 
 
 def test_release_scenario_remains_stable_across_supported_network_depth():
