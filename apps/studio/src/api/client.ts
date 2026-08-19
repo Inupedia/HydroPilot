@@ -95,6 +95,40 @@ export interface FlowForecastResponse {
   forecast: FlowForecastPoint[]
   summary: FlowForecastSummary
 }
+export interface RainfallForecastPoint {
+  timestamp_minutes: number
+  precipitation_mm: number
+}
+export interface RunoffForecastRequest {
+  object_id: string
+  rainfall: RainfallForecastPoint[]
+  dt_minutes?: number
+  initial_flow_cms: number
+  catchment_area_km2: number
+  runoff_coefficient?: number
+  response_time_hours?: number
+  baseflow_cms?: number
+}
+export interface RunoffForecastPoint {
+  timestamp_minutes: number
+  rainfall_mm: number
+  flow_cms: number
+}
+export interface RunoffForecastSummary {
+  current_flow_cms: number
+  peak_flow_cms: number
+  peak_timestamp_minutes: number
+  peak_change_pct: number | null
+  total_rainfall_mm: number
+}
+export interface RunoffForecastResponse {
+  object_id: string
+  model: string
+  dt_minutes: number
+  horizon_minutes: number
+  runoff: RunoffForecastPoint[]
+  summary: RunoffForecastSummary
+}
 
 function inTauri(): boolean {
   return Boolean(window.__TAURI_INTERNALS__)
@@ -167,6 +201,7 @@ export const hydroApi = {
     return result.states
   },
   flowForecast: (request: FlowForecastRequest) => postJson<FlowForecastResponse>('/api/forecasts/flow', request),
+  runoffForecast: (request: RunoffForecastRequest) => postJson<RunoffForecastResponse>('/api/forecasts/runoff', request),
   llmProviders: () => getJson<LlmProviderSummary[]>('/api/llm/providers'),
   llmChat: (request: LlmChatRequest) => postJson<LlmChatResponse>('/api/llm/chat', request),
   agentChat: (request: AgentChatRequest) => postJson<AgentChatResponse>('/api/agent/chat', request),
