@@ -5,7 +5,7 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
-from hydropilot_api.domain import CurveType, HydroConstraint, ObjectType
+from hydropilot_api.domain import CurveType, HydroConstraint, NetworkPathItem, ObjectType
 from hydropilot_api.repositories.protocols import HydroRepository
 from hydropilot_api.topology import downstream_path
 
@@ -37,6 +37,15 @@ class ObjectInventoryPage(BaseModel):
 class TraceDownstreamArgs(BaseModel):
     object_id: str = Field(min_length=1)
     max_hops: int = Field(default=8, ge=0, le=25)
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=100, ge=1, le=200)
+
+
+class DownstreamTracePage(BaseModel):
+    offset: int
+    limit: int
+    has_more: bool
+    items: list[NetworkPathItem]
 
 
 class ListCurvesArgs(BaseModel):
@@ -139,7 +148,19 @@ def _list_objects(repo: HydroRepository, args: BaseModel):
 def _trace_downstream(repo: HydroRepository, args: BaseModel):
     values = TraceDownstreamArgs.model_validate(args)
     _require_object(repo, values.object_id)
-    return downstream_path(values.object_id, repo.list_relations(), max_hops=values.max_hops)
+    requested = values.offset + values.limit + 1
+    path = downstream_path(
+        values.object_id,
+        repo.list_relations(),
+        max_hops=values.max_hops,
+        max_results=requested,
+    )
+    return DownstreamTracePage(
+        offset=values.offset,
+        limit=values.limit,
+        has_more=len(path) > values.offset + values.limit,
+        items=path[values.offset : values.offset + values.limit],
+    )
 
 
 def _list_curves(repo: HydroRepository, args: BaseModel):
@@ -213,7 +234,7 @@ _REGISTRY: dict[str, _ToolRegistration] = {
         handler=_list_objects,
     ),
     "trace_downstream": _ToolRegistration(
-        description="Trace downstream FLOWS_TO relationships from one water-network object.",
+        description="Trace a bounded page of downstream FLOWS_TO relationships from one water-network object.",
         args_model=TraceDownstreamArgs,
         handler=_trace_downstream,
     ),
