@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 
 from pydantic import BaseModel, Field, model_validator
@@ -331,12 +332,39 @@ def _evaluate_constraints(
     return violations, unevaluated
 
 
+def _reservoir_storage_inputs(reservoir_id: str, properties: dict) -> tuple[float, float]:
+    initial_storage = properties.get("initial_storage_m3")
+    max_storage = properties.get("max_storage_m3")
+    if initial_storage is None or max_storage is None:
+        raise ValueError(
+            f"reservoir {reservoir_id} requires initial_storage_m3 and max_storage_m3"
+        )
+    if isinstance(initial_storage, bool) or isinstance(max_storage, bool):
+        raise ValueError(
+            f"reservoir {reservoir_id} has invalid initial_storage_m3 or max_storage_m3"
+        )
+    try:
+        storage = float(initial_storage)
+        capacity = float(max_storage)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"reservoir {reservoir_id} has invalid initial_storage_m3 or max_storage_m3"
+        ) from exc
+    if not math.isfinite(storage) or not math.isfinite(capacity):
+        raise ValueError(
+            f"reservoir {reservoir_id} has invalid initial_storage_m3 or max_storage_m3"
+        )
+    return storage, capacity
+
+
 def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest) -> ReleaseScenarioResponse:
     reservoir = repo.get_object(request.reservoir_id)
     if reservoir is None:
         raise KeyError(request.reservoir_id)
-    storage = float(reservoir.properties.get("initial_storage_m3", 0))
-    max_storage = float(reservoir.properties.get("max_storage_m3", max(storage, 1)))
+    storage, max_storage = _reservoir_storage_inputs(
+        request.reservoir_id,
+        reservoir.properties,
+    )
     storage_level_curve = _storage_level_curve(repo, request.reservoir_id)
     if storage_level_curve is not None:
         level = storage_level_curve.level_for_storage(storage)
