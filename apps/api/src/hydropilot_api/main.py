@@ -15,6 +15,7 @@ from hydropilot_api.domain import (
 from hydropilot_api.llm import ChatRequest, ChatResponse, LLMProviderError, ProviderSummary, chat_completion, provider_catalog
 from hydropilot_api.repositories.fixture import get_fixture_repository
 from hydropilot_api.services.forecast import FlowForecastRequest, FlowForecastResponse, run_flow_forecast
+from hydropilot_api.services.runoff_forecast import RunoffForecastRequest, RunoffForecastResponse, run_runoff_forecast
 from hydropilot_api.services.scenario import ReleaseScenarioRequest, ReleaseScenarioResponse, run_release_scenario
 from hydropilot_api.tools import (
     HydroToolDefinition,
@@ -113,6 +114,16 @@ def flow_forecast(request: FlowForecastRequest) -> FlowForecastResponse:
         raise HTTPException(status_code=404, detail="object not found")
     try:
         return run_flow_forecast(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/forecasts/runoff", response_model=RunoffForecastResponse)
+def runoff_forecast(request: RunoffForecastRequest) -> RunoffForecastResponse:
+    if repo().get_object(request.object_id) is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    try:
+        return run_runoff_forecast(request)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
