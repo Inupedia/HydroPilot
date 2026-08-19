@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
+from hydropilot_api.domain import HydroState, RelationType
 from hydropilot_api.repositories.protocols import HydroRepository
 from hydropilot_api.services.runoff_forecast import (
     RainfallForecastPoint,
@@ -27,7 +28,7 @@ class ReservoirRainfallForecastRequest(BaseModel):
     runoff_coefficient: float = Field(default=0.18, ge=0, le=1)
     response_time_hours: float = Field(default=8.0, gt=0, le=240)
     baseflow_cms: float = Field(default=0, ge=0)
-    max_hops: int = Field(default=6, ge=1, le=12)
+    max_hops: int = Field(default=20, ge=1, le=25)
 
     @model_validator(mode="after")
     def validate_forecast_horizon(self) -> "ReservoirRainfallForecastRequest":
@@ -55,6 +56,53 @@ class ReservoirRainfallForecastResponse(BaseModel):
     runoff: RunoffForecastResponse
     scenario: ReleaseScenarioResponse
     summary: ReservoirForecastSummary
+
+
+class _ReservoirForecastScenarioRequest(ReleaseScenarioRequest):
+    """Internal scenario contract that allows a forecast to cover a longer routing chain."""
+
+    max_hops: int = Field(default=20, ge=1, le=25)
+
+
+def _project_control_point_flow_states(
+    repo: HydroRepository,
+    scenario: ReleaseScenarioResponse,
+) -> ReleaseScenarioResponse:
+    states = list(scenario.states)
+    existing = {
+        (state.object_id, state.variable, state.timestamp_minutes)
+        for state in states
+    }
+    flow_states_by_object: dict[str, list[HydroState]] = {}
+    for state in states:
+        if state.variable == "flow":
+            flow_states_by_object.setdefault(state.object_id, []).append(state)
+
+    for relation in repo.list_relations():
+        if relation.relation_type is not RelationType.CONTROLS:
+            continue
+        source_states = flow_states_by_object.get(relation.source_id, [])
+        if not source_states:
+            continue
+        if repo.get_object(relation.target_id) is None:
+            raise ValueError(f"controlled object not found: {relation.target_id}")
+        for source_state in source_states:
+            key = (relation.target_id, "flow", source_state.timestamp_minutes)
+            if key in existing:
+                continue
+            states.append(
+                HydroState(
+                    scenario_id=source_state.scenario_id,
+                    object_id=relation.target_id,
+                    timestamp_minutes=source_state.timestamp_minutes,
+                    variable="flow",
+                    value=source_state.value,
+                    unit=source_state.unit,
+                )
+            )
+            existing.add(key)
+
+    return scenario.model_copy(update={"states": states})
 
 
 def run_reservoir_rainfall_forecast(
@@ -88,7 +136,7 @@ def run_reservoir_rainfall_forecast(
     ]
     scenario = run_release_scenario(
         repo,
-        ReleaseScenarioRequest(
+        _ReservoirForecastScenarioRequest(
             reservoir_id=request.reservoir_id,
             duration_minutes=duration_minutes,
             dt_minutes=request.dt_minutes,
@@ -97,6 +145,7 @@ def run_reservoir_rainfall_forecast(
             release_hydrograph=release_hydrograph,
         ),
     )
+    scenario = _project_control_point_flow_states(repo, scenario)
 
     storage_states = sorted(
         [
