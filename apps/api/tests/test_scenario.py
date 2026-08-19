@@ -102,74 +102,73 @@ def release_only_repo() -> MemoryHydroRepository:
     )
 
 
-def test_release_request_requires_well_formed_inflow_boundary():
+def test_release_request_requires_well_formed_inflow_and_release_boundaries():
     with pytest.raises(ValidationError):
         ReleaseScenarioRequest(
             reservoir_id="reservoir-alpha",
-            release_cms=100,
             duration_minutes=60,
             dt_minutes=30,
             max_hops=1,
+            inflow_hydrograph=constant_boundary(100, 60),
         )
 
     with pytest.raises(ValidationError):
         ReleaseScenarioRequest(
             reservoir_id="reservoir-alpha",
-            release_cms=100,
             duration_minutes=50,
             dt_minutes=30,
             max_hops=1,
-            inflow_hydrograph=[
-                HydrographPoint(timestamp_minutes=0, flow_cms=20),
-                HydrographPoint(timestamp_minutes=60, flow_cms=40),
-            ],
+            inflow_hydrograph=constant_boundary(100, 60),
+            release_hydrograph=constant_boundary(50, 60),
         )
 
-    invalid_boundaries = [
-        [
-            HydrographPoint(timestamp_minutes=10, flow_cms=20),
-            HydrographPoint(timestamp_minutes=60, flow_cms=40),
-        ],
-        [
-            HydrographPoint(timestamp_minutes=0, flow_cms=20),
-            HydrographPoint(timestamp_minutes=0, flow_cms=40),
-            HydrographPoint(timestamp_minutes=60, flow_cms=60),
-        ],
-        [
-            HydrographPoint(timestamp_minutes=0, flow_cms=20),
-            HydrographPoint(timestamp_minutes=30, flow_cms=40),
-        ],
+    invalid_inflow = [
+        HydrographPoint(timestamp_minutes=10, flow_cms=20),
+        HydrographPoint(timestamp_minutes=60, flow_cms=40),
     ]
-    for boundary in invalid_boundaries:
-        with pytest.raises(ValidationError):
-            ReleaseScenarioRequest(
-                reservoir_id="reservoir-alpha",
-                release_cms=100,
-                duration_minutes=60,
-                dt_minutes=30,
-                max_hops=1,
-                inflow_hydrograph=boundary,
-            )
+    with pytest.raises(ValidationError):
+        ReleaseScenarioRequest(
+            reservoir_id="reservoir-alpha",
+            duration_minutes=60,
+            dt_minutes=30,
+            max_hops=1,
+            inflow_hydrograph=invalid_inflow,
+            release_hydrograph=constant_boundary(50, 60),
+        )
+
+    invalid_release = [
+        HydrographPoint(timestamp_minutes=0, flow_cms=20),
+        HydrographPoint(timestamp_minutes=30, flow_cms=40),
+    ]
+    with pytest.raises(ValidationError):
+        ReleaseScenarioRequest(
+            reservoir_id="reservoir-alpha",
+            duration_minutes=60,
+            dt_minutes=30,
+            max_hops=1,
+            inflow_hydrograph=constant_boundary(100, 60),
+            release_hydrograph=invalid_release,
+        )
 
 
-def test_release_scenario_samples_inflow_and_integrates_it_independently_of_release():
+def test_release_scenario_samples_release_and_integrates_both_hydrographs():
     result = run_release_scenario(
         release_only_repo(),
         ReleaseScenarioRequest(
             reservoir_id="reservoir-alpha",
-            release_cms=100,
             duration_minutes=60,
             dt_minutes=30,
             max_hops=1,
-            inflow_hydrograph=[
+            inflow_hydrograph=constant_boundary(100, 60),
+            release_hydrograph=[
                 HydrographPoint(timestamp_minutes=0, flow_cms=20),
                 HydrographPoint(timestamp_minutes=60, flow_cms=80),
             ],
         ),
     )
 
-    inflow_states = [state for state in result.states if state.variable == "inflow"]
-    assert [(state.timestamp_minutes, state.value) for state in inflow_states] == [
+    release_states = [state for state in result.states if state.variable == "release"]
+    assert [(state.timestamp_minutes, state.value) for state in release_states] == [
         (0, pytest.approx(20)),
         (30, pytest.approx(50)),
         (60, pytest.approx(80)),
@@ -178,12 +177,12 @@ def test_release_scenario_samples_inflow_and_integrates_it_independently_of_rele
     storage_states = [state for state in result.states if state.variable == "storage"]
     assert [state.value for state in storage_states] == [
         pytest.approx(1_000_000),
-        pytest.approx(883_000),
-        pytest.approx(820_000),
+        pytest.approx(1_117_000),
+        pytest.approx(1_180_000),
     ]
 
 
-def test_release_scenario_uses_hydrograph_topology_and_reach_routing_properties(monkeypatch):
+def test_release_scenario_routes_release_series_with_steady_start(monkeypatch):
     repo = MemoryHydroRepository(
         objects=[
             reservoir(),
@@ -208,7 +207,7 @@ def test_release_scenario_uses_hydrograph_topology_and_reach_routing_properties(
     captured = []
 
     def capture_route(inflow_cms, params, initial_outflow_cms=None):
-        captured.append(params)
+        captured.append((list(inflow_cms), params, initial_outflow_cms))
         return list(inflow_cms)
 
     monkeypatch.setattr(scenario_module, "route_muskingum", capture_route)
@@ -217,19 +216,25 @@ def test_release_scenario_uses_hydrograph_topology_and_reach_routing_properties(
         repo,
         ReleaseScenarioRequest(
             reservoir_id="reservoir-alpha",
-            release_cms=100,
             duration_minutes=60,
             dt_minutes=30,
             max_hops=1,
-            inflow_hydrograph=constant_boundary(50, 60),
+            inflow_hydrograph=constant_boundary(100, 60),
+            release_hydrograph=[
+                HydrographPoint(timestamp_minutes=0, flow_cms=10),
+                HydrographPoint(timestamp_minutes=60, flow_cms=70),
+            ],
         ),
     )
 
     flow_objects = {state.object_id for state in result.states if state.variable == "flow"}
     assert flow_objects == {"routing-reach"}
     assert len(captured) == 1
-    assert captured[0].k_seconds == pytest.approx(47 * 60)
-    assert captured[0].x == pytest.approx(0.31)
+    routed_input, params, initial_outflow = captured[0]
+    assert routed_input == pytest.approx([10, 40, 70])
+    assert initial_outflow == pytest.approx(10)
+    assert params.k_seconds == pytest.approx(47 * 60)
+    assert params.x == pytest.approx(0.31)
 
 
 @pytest.mark.parametrize(
@@ -253,11 +258,11 @@ def test_release_scenario_requires_exactly_one_discharge_target(relations):
             repo,
             ReleaseScenarioRequest(
                 reservoir_id="reservoir-alpha",
-                release_cms=100,
                 duration_minutes=30,
                 dt_minutes=30,
                 max_hops=1,
                 inflow_hydrograph=constant_boundary(50, 30),
+                release_hydrograph=constant_boundary(100, 30),
             ),
         )
 
@@ -281,10 +286,10 @@ def test_release_scenario_requires_stored_routing_parameters():
             repo,
             ReleaseScenarioRequest(
                 reservoir_id="reservoir-alpha",
-                release_cms=100,
                 duration_minutes=30,
                 dt_minutes=30,
                 max_hops=1,
                 inflow_hydrograph=constant_boundary(50, 30),
+                release_hydrograph=constant_boundary(100, 30),
             ),
         )

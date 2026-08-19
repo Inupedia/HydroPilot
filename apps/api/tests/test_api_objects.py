@@ -4,7 +4,7 @@ from hydropilot_api.main import app
 client = TestClient(app)
 
 
-def constant_inflow(flow_cms: float, duration_minutes: int) -> list[dict[str, float | int]]:
+def constant_hydrograph(flow_cms: float, duration_minutes: int) -> list[dict[str, float | int]]:
     return [
         {"timestamp_minutes": 0, "flow_cms": flow_cms},
         {"timestamp_minutes": duration_minutes, "flow_cms": flow_cms},
@@ -24,41 +24,57 @@ def test_downstream_endpoint_returns_hop_aware_network():
     assert [(item["object_id"], item["hop"]) for item in response.json()] == [("reach-002", 1), ("reach-003", 2), ("reach-004", 3)]
 
 
-def test_release_scenario_requires_explicit_inflow_boundary():
-    response = client.post(
+def test_release_scenario_requires_explicit_inflow_and_release_boundaries():
+    missing_release = client.post(
         "/api/scenarios/release",
-        json={"release_cms": 900, "duration_minutes": 60, "dt_minutes": 30, "max_hops": 2},
+        json={
+            "duration_minutes": 60,
+            "dt_minutes": 30,
+            "max_hops": 2,
+            "inflow_hydrograph": constant_hydrograph(500, 60),
+        },
     )
-    assert response.status_code == 422
+    assert missing_release.status_code == 422
+
+    missing_inflow = client.post(
+        "/api/scenarios/release",
+        json={
+            "duration_minutes": 60,
+            "dt_minutes": 30,
+            "max_hops": 2,
+            "release_hydrograph": constant_hydrograph(900, 60),
+        },
+    )
+    assert missing_inflow.status_code == 422
 
 
 def test_release_scenario_persists_computed_state_shape():
     response = client.post(
         "/api/scenarios/release",
         json={
-            "release_cms": 900,
             "duration_minutes": 60,
             "dt_minutes": 30,
             "max_hops": 2,
-            "inflow_hydrograph": constant_inflow(500, 60),
+            "inflow_hydrograph": constant_hydrograph(500, 60),
+            "release_hydrograph": constant_hydrograph(900, 60),
         },
     )
     assert response.status_code == 200
     body = response.json()
     assert body["scenario_id"] == "scenario-release"
     variables = {state["variable"] for state in body["states"]}
-    assert {"storage", "inflow", "flow"}.issubset(variables)
+    assert {"storage", "inflow", "release", "flow"}.issubset(variables)
 
 
 def test_release_scenario_remains_stable_across_supported_network_depth():
     response = client.post(
         "/api/scenarios/release",
         json={
-            "release_cms": 2200,
             "duration_minutes": 180,
             "dt_minutes": 30,
             "max_hops": 12,
-            "inflow_hydrograph": constant_inflow(1200, 180),
+            "inflow_hydrograph": constant_hydrograph(1200, 180),
+            "release_hydrograph": constant_hydrograph(2200, 180),
         },
     )
     assert response.status_code == 200

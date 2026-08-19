@@ -13,29 +13,46 @@ class HydrographPoint(BaseModel):
     flow_cms: float = Field(ge=0)
 
 
+def _validate_hydrograph_boundary(
+    name: str,
+    points: list[HydrographPoint],
+    *,
+    duration_minutes: int,
+) -> None:
+    if points[0].timestamp_minutes != 0:
+        raise ValueError(f"{name} hydrograph must start at minute 0")
+    if any(
+        current.timestamp_minutes >= following.timestamp_minutes
+        for current, following in zip(points, points[1:])
+    ):
+        raise ValueError(f"{name} hydrograph timestamps must be strictly increasing")
+    if points[-1].timestamp_minutes < duration_minutes:
+        raise ValueError(f"{name} hydrograph must cover the scenario duration")
+
+
 class ReleaseScenarioRequest(BaseModel):
     reservoir_id: str = "reservoir-shasta"
-    release_cms: float = Field(gt=0)
     duration_minutes: int = Field(default=180, gt=0, le=1440)
     dt_minutes: int = Field(default=30, gt=0, le=240)
     max_hops: int = Field(default=4, ge=1, le=12)
     inflow_hydrograph: list[HydrographPoint] = Field(min_length=2)
+    release_hydrograph: list[HydrographPoint] = Field(min_length=2)
 
     @model_validator(mode="after")
-    def validate_time_grid_and_inflow_boundary(self) -> "ReleaseScenarioRequest":
+    def validate_time_grid_and_boundaries(self) -> "ReleaseScenarioRequest":
         if self.duration_minutes % self.dt_minutes != 0:
             raise ValueError("duration_minutes must be divisible by dt_minutes")
 
-        points = self.inflow_hydrograph
-        if points[0].timestamp_minutes != 0:
-            raise ValueError("inflow hydrograph must start at minute 0")
-        if any(
-            current.timestamp_minutes >= following.timestamp_minutes
-            for current, following in zip(points, points[1:])
-        ):
-            raise ValueError("inflow hydrograph timestamps must be strictly increasing")
-        if points[-1].timestamp_minutes < self.duration_minutes:
-            raise ValueError("inflow hydrograph must cover the scenario duration")
+        _validate_hydrograph_boundary(
+            "inflow",
+            self.inflow_hydrograph,
+            duration_minutes=self.duration_minutes,
+        )
+        _validate_hydrograph_boundary(
+            "release",
+            self.release_hydrograph,
+            duration_minutes=self.duration_minutes,
+        )
         return self
 
 
@@ -54,7 +71,7 @@ def _sample_hydrograph(points: list[HydrographPoint], timestamp_minutes: int) ->
             fraction = (timestamp_minutes - current.timestamp_minutes) / span
             return current.flow_cms + fraction * (following.flow_cms - current.flow_cms)
 
-    raise ValueError("timestamp outside inflow hydrograph domain")
+    raise ValueError("timestamp outside hydrograph domain")
 
 
 def _release_reach_id(reservoir_id: str, relations: list[HydroRelation]) -> str:
@@ -106,16 +123,18 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
     timestamps = list(range(0, request.duration_minutes + request.dt_minutes, request.dt_minutes))
     dt_seconds = request.dt_minutes * 60
     sampled_inflow = [_sample_hydrograph(request.inflow_hydrograph, timestamp) for timestamp in timestamps]
+    sampled_release = [_sample_hydrograph(request.release_hydrograph, timestamp) for timestamp in timestamps]
     states: list[HydroState] = []
 
     for idx, timestamp in enumerate(timestamps):
         if idx > 0:
             interval_inflow = (sampled_inflow[idx - 1] + sampled_inflow[idx]) / 2.0
+            interval_release = (sampled_release[idx - 1] + sampled_release[idx]) / 2.0
             state = step_reservoir(
                 state,
                 ReservoirStep(
                     inflow_cms=interval_inflow,
-                    outflow_cms=request.release_cms,
+                    outflow_cms=interval_release,
                     dt_seconds=dt_seconds,
                 ),
             )
@@ -139,6 +158,16 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
                 unit="m3/s",
             )
         )
+        states.append(
+            HydroState(
+                scenario_id="scenario-release",
+                object_id=request.reservoir_id,
+                timestamp_minutes=timestamp,
+                variable="release",
+                value=sampled_release[idx],
+                unit="m3/s",
+            )
+        )
         if state.level_m is not None:
             states.append(
                 HydroState(
@@ -151,19 +180,14 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
                 )
             )
 
-    # Treat the requested release as a step change from a lower pre-scenario flow.
-    # Route each downstream reach sequentially so the demo shows delay/attenuation.
-    routed_series = [request.release_cms for _ in timestamps]
-    initial_flow = request.release_cms * 0.35
-
+    routed_series = list(sampled_release)
     for item in downstream:
         params = _routing_parameters(repo, item.object_id, dt_seconds=dt_seconds)
         routed_series = route_muskingum(
             routed_series,
             params,
-            initial_outflow_cms=initial_flow,
+            initial_outflow_cms=routed_series[0],
         )
-        initial_flow = routed_series[0]
         for timestamp, flow in zip(timestamps, routed_series, strict=True):
             states.append(
                 HydroState(
