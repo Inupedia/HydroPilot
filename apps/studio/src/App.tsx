@@ -237,7 +237,7 @@ export default function App() {
         <div className="status-card" data-testid="scenario-status"><span>Reservoir storage</span><strong>{storageState ? `${(storageState.value / 1e9).toFixed(2)} B m³` : 'Run scenario'}</strong></div>
         <div className="legend"><span><i className="legend-line river"/>River</span><span><i className="legend-dot reservoir"/>Reservoir</span><span><i className="legend-dot dam"/>Dam</span><span><i className="legend-dot gauge"/>Gauge</span><span><i className="legend-dot control"/>Control point</span></div>
       </aside>
-      <section className="map-stage"><div ref={mapHost} className="cesium-host" data-testid="cesium-host"/><div className="map-header"><div><span className="live-dot"/> CESIUM 3D / EPSG:4326</div><div>{objects.length} OBJECTS · PUBLIC DEMO DATA</div></div><div className="map-title-card"><span>Water-network digital twin</span><strong>Shasta → Sacramento control section</strong></div><Timeline timestamps={timestamps} timestamp={timestamp} onChange={(value) => setTimestamp(value)}/></section>
+      <section className="map-stage"><div ref={mapHost} className="cesium-host" data-testid="cesium-host"/><div className="map-header"><div><span className="live-dot"/> CESIUM 3D / EPSG:4326</div><div>{objects.length} OBJECTS · PUBLIC DEMO DATA</div></div><div className="map-title-card"><span>Water-network digital twin</span><strong>Shasta → Sacramento control section</strong></div><Timeline timestamps={timestamps} timestamp={timestamp} inflowCms={inflowCms} releaseCms={releaseCms} onChange={(value) => setTimestamp(value)}/></section>
     </main>
   )
 }

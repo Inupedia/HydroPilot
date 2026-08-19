@@ -1,111 +1,123 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { hydroApi, type FlowObservation, type RunoffForecastResponse } from '../api/client'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { hydroApi, type FlowObservation, type ReservoirRainfallForecastResponse } from '../api/client'
 import { demoForecastHistory, demoRainfallForecast, forecastChartGeometry, formatArrival, polylinePoints } from './forecastView'
 import './forecast.css'
 
 interface TimelineProps {
   timestamps: number[]
   timestamp: number
+  inflowCms: number
+  releaseCms: number
   onChange: (value: number) => void
 }
 
 const CHART_WIDTH = 640
 const CHART_HEIGHT = 150
-const CATCHMENT_AREA_KM2 = 1200
+const CATCHMENT_AREA_KM2 = 8000
 const RUNOFF_COEFFICIENT = 0.18
 const RESPONSE_TIME_HOURS = 8
 
-export default function Timeline({ timestamps, timestamp, onChange }: TimelineProps) {
+export default function Timeline({ timestamps, timestamp, inflowCms, releaseCms, onChange }: TimelineProps) {
+  const requestVersion = useRef(0)
   const [history, setHistory] = useState<FlowObservation[]>([])
-  const [forecast, setForecast] = useState<RunoffForecastResponse | null>(null)
+  const [forecast, setForecast] = useState<ReservoirRainfallForecastResponse | null>(null)
   const [forecastBusy, setForecastBusy] = useState(false)
   const [forecastError, setForecastError] = useState('')
 
   const loadForecast = useCallback(async () => {
+    const version = ++requestVersion.current
     setForecastBusy(true)
     setForecastError('')
     try {
-      const objects = await hydroApi.objects()
-      const gauge = objects.find((item) => item.id === 'gauge-keswick')
-      const currentFlow = Number(gauge?.properties.latest_flow_cms)
-      if (!Number.isFinite(currentFlow) || currentFlow < 0) {
-        throw new Error('gauge-keswick requires a non-negative latest_flow_cms demo value')
-      }
-      const nextHistory = demoForecastHistory(currentFlow)
+      if (!Number.isFinite(inflowCms) || inflowCms < 0) throw new Error('reservoir inflow must be non-negative')
+      if (!Number.isFinite(releaseCms) || releaseCms < 0) throw new Error('reservoir release must be non-negative')
+      const nextHistory = demoForecastHistory(inflowCms)
       const rainfall = demoRainfallForecast()
-      const nextForecast = await hydroApi.runoffForecast({
-        object_id: 'gauge-keswick',
+      const nextForecast = await hydroApi.reservoirForecast({
+        reservoir_id: 'reservoir-shasta',
         rainfall,
         dt_minutes: 30,
-        initial_flow_cms: currentFlow,
+        initial_inflow_cms: inflowCms,
+        release_cms: releaseCms,
         catchment_area_km2: CATCHMENT_AREA_KM2,
         runoff_coefficient: RUNOFF_COEFFICIENT,
         response_time_hours: RESPONSE_TIME_HOURS,
-        baseflow_cms: currentFlow * 0.57,
+        baseflow_cms: inflowCms * 0.57,
+        max_hops: 6,
       })
+      if (version !== requestVersion.current) return
       setHistory(nextHistory)
       setForecast(nextForecast)
     } catch (error) {
+      if (version !== requestVersion.current) return
       setForecastError(error instanceof Error ? error.message : String(error))
     } finally {
-      setForecastBusy(false)
+      if (version === requestVersion.current) setForecastBusy(false)
     }
-  }, [])
+  }, [inflowCms, releaseCms])
 
   useEffect(() => { void loadForecast() }, [loadForecast])
 
   const geometry = useMemo(() => {
     if (!forecast || !history.length) return null
-    return forecastChartGeometry(history, forecast.runoff, CHART_WIDTH, CHART_HEIGHT)
+    return forecastChartGeometry(history, forecast.runoff.runoff, CHART_WIDTH, CHART_HEIGHT)
   }, [forecast, history])
 
   const hasScenario = timestamps.length > 0
   const min = timestamps[0] ?? 0
   const max = timestamps[timestamps.length - 1] ?? 180
   const step = Math.max(1, timestamps[1] ? timestamps[1] - timestamps[0] : 30)
-  const summary = forecast?.summary
-  const peakChange = summary?.peak_change_pct == null ? null : `${summary.peak_change_pct >= 0 ? '+' : ''}${summary.peak_change_pct.toFixed(1)}% vs now`
+  const runoffSummary = forecast?.runoff.summary
+  const reservoirSummary = forecast?.summary
+  const peakChange = runoffSummary?.peak_change_pct == null ? null : `${runoffSummary.peak_change_pct >= 0 ? '+' : ''}${runoffSummary.peak_change_pct.toFixed(1)}% vs now`
+  const storageChange = reservoirSummary?.storage_change_pct == null ? null : `${reservoirSummary.storage_change_pct >= 0 ? '+' : ''}${reservoirSummary.storage_change_pct.toFixed(2)}%`
+  const levelStatus = reservoirSummary?.final_level_m == null ? 'level unavailable' : `level ${reservoirSummary.final_level_m.toFixed(2)} m`
   const nowLeft = geometry ? `${(geometry.nowX / CHART_WIDTH) * 100}%` : '33.3%'
-  const rainfallMax = Math.max(1, ...(forecast?.runoff.map((point) => point.rainfall_mm) ?? [1]))
+  const rainfallMax = Math.max(1, ...(forecast?.runoff.runoff.map((point) => point.rainfall_mm) ?? [1]))
 
   return (
     <div className="timeline forecast-timeline" data-testid="timeline">
       <div className="forecast-topline">
         <div className="forecast-heading">
           <div>
-            <small>RAINFALL → RUNOFF FORECAST · KESWICK</small>
-            <strong>Observed flow → NOW → rainfall-driven flow</strong>
+            <small>RAINFALL → RESERVOIR FORECAST · SHASTA</small>
+            <strong>Forecast inflow → storage under {releaseCms.toLocaleString()} m³/s release</strong>
           </div>
         </div>
         <span className={`forecast-badge ${forecastBusy ? 'loading' : ''}`}>
-          {forecastBusy ? 'Forecasting…' : forecast ? forecast.model.replace('_', ' ') : 'Unavailable'}
+          {forecastBusy ? 'Forecasting…' : forecast ? 'reservoir balance' : 'Unavailable'}
         </span>
       </div>
 
       {forecastError ? <div className="forecast-error" role="alert">Forecast unavailable: {forecastError}</div> : null}
 
-      <div className="forecast-summary-grid" aria-label="Forecast summary">
+      <div className="forecast-summary-grid reservoir-summary-grid" aria-label="Forecast summary">
         <article className="forecast-stat">
-          <span>Current flow</span>
-          <strong>{summary ? `${summary.current_flow_cms.toFixed(0)} m³/s` : '—'}</strong>
-          <small>NOW · fixture gauge</small>
+          <span>Current inflow</span>
+          <strong>{runoffSummary ? `${runoffSummary.current_flow_cms.toFixed(0)} m³/s` : '—'}</strong>
+          <small>NOW · explicit boundary</small>
         </article>
         <article className="forecast-stat">
           <span>Rain-driven peak</span>
-          <strong>{summary ? `${summary.peak_flow_cms.toFixed(0)} m³/s` : '—'}</strong>
+          <strong>{reservoirSummary ? `${reservoirSummary.peak_inflow_cms.toFixed(0)} m³/s` : '—'}</strong>
           <small>{peakChange ?? 'waiting for forecast'}</small>
         </article>
         <article className="forecast-stat">
           <span>Peak arrival</span>
-          <strong>{summary ? formatArrival(summary.peak_timestamp_minutes) : '—'}</strong>
-          <small>{summary ? `${summary.total_rainfall_mm.toFixed(0)} mm forecast rain` : 'future horizon'}</small>
+          <strong>{reservoirSummary ? formatArrival(reservoirSummary.peak_inflow_timestamp_minutes) : '—'}</strong>
+          <small>{runoffSummary ? `${runoffSummary.total_rainfall_mm.toFixed(0)} mm forecast rain` : 'future horizon'}</small>
+        </article>
+        <article className="forecast-stat reservoir-storage-stat">
+          <span>3h reservoir storage</span>
+          <strong>{reservoirSummary ? `${(reservoirSummary.final_storage_m3 / 1e9).toFixed(3)} B m³` : '—'}</strong>
+          <small>{storageChange ? `${storageChange} · ${levelStatus}` : 'no level-storage curve'}</small>
         </article>
       </div>
 
       <div className="forecast-chart-wrap" data-testid="forecast-chart">
         {geometry ? (
           <>
-            <svg className="forecast-chart" viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="none" aria-label="Observed and rainfall-driven forecast flow chart" role="img">
+            <svg className="forecast-chart" viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="none" aria-label="Observed and rainfall-driven reservoir inflow forecast chart" role="img">
               {[0.25, 0.5, 0.75].map((fraction) => <line key={fraction} className="forecast-grid-line" x1="0" x2={CHART_WIDTH} y1={CHART_HEIGHT * fraction} y2={CHART_HEIGHT * fraction}/>) }
               <line className="forecast-now-line" x1={geometry.nowX} x2={geometry.nowX} y1="0" y2={CHART_HEIGHT}/>
               <polyline className="forecast-observed-line" points={polylinePoints(geometry.observed)}/>
@@ -117,9 +129,9 @@ export default function Timeline({ timestamps, timestamp, onChange }: TimelinePr
       </div>
 
       <div className="rainfall-strip" data-testid="rainfall-strip" aria-label="Forecast rainfall profile">
-        <div className="rainfall-strip-label"><strong>Forecast rainfall</strong><small>drives runoff model</small></div>
+        <div className="rainfall-strip-label"><strong>Forecast rainfall</strong><small>drives reservoir inflow</small></div>
         <div className="rainfall-bars">
-          {forecast?.runoff.map((point) => (
+          {forecast?.runoff.runoff.map((point) => (
             <div className="rainfall-step" key={point.timestamp_minutes}>
               <div className="rainfall-bar-track"><i style={{ height: `${Math.max(3, (point.rainfall_mm / rainfallMax) * 100)}%` }}/></div>
               <span>{point.rainfall_mm.toFixed(0)}</span>
@@ -127,12 +139,12 @@ export default function Timeline({ timestamps, timestamp, onChange }: TimelinePr
             </div>
           ))}
         </div>
-        <div className="rainfall-total"><strong>{summary ? `${summary.total_rainfall_mm.toFixed(0)} mm` : '—'}</strong><small>3h total</small></div>
+        <div className="rainfall-total"><strong>{runoffSummary ? `${runoffSummary.total_rainfall_mm.toFixed(0)} mm` : '—'}</strong><small>3h total</small></div>
       </div>
 
       <div className="forecast-legend-row">
-        <div className="forecast-series-legend"><span><i/>Observed</span><span><i className="predicted"/>Rainfall-driven forecast</span></div>
-        <span className="forecast-provenance">Demo rainfall + uncalibrated basin assumptions ({CATCHMENT_AREA_KM2.toLocaleString()} km² · C={RUNOFF_COEFFICIENT} · K={RESPONSE_TIME_HOURS}h). History is derived from fixture latest flow; not operational data.</span>
+        <div className="forecast-series-legend"><span><i/>Demo pre-NOW inflow</span><span><i className="predicted"/>Rainfall-driven inflow</span></div>
+        <span className="forecast-provenance">Demo rainfall + uncalibrated basin assumptions ({CATCHMENT_AREA_KM2.toLocaleString()} km² · C={RUNOFF_COEFFICIENT} · K={RESPONSE_TIME_HOURS}h). Pre-NOW history is scaled from the explicit inflow boundary. No reservoir level is forecast without a level-storage curve.</span>
       </div>
 
       {hasScenario ? (
@@ -148,14 +160,14 @@ export default function Timeline({ timestamps, timestamp, onChange }: TimelinePr
             onChange={(event) => onChange(Number(event.target.value))}
           />
           <button className="forecast-refresh" type="button" disabled={forecastBusy} onClick={() => void loadForecast()}>
-            {forecastBusy ? 'Refreshing…' : 'Refresh runoff forecast'}
+            {forecastBusy ? 'Refreshing…' : 'Refresh reservoir forecast'}
           </button>
         </div>
       ) : (
         <div className="forecast-scenario-row scenario-empty">
-          <span>Forecast is live in the demo · run a release scenario to enable 0D + 1D playback.</span>
+          <span>Reservoir forecast is live · run the explicit scenario to enable 0D + 1D playback.</span>
           <button className="forecast-refresh" type="button" disabled={forecastBusy} onClick={() => void loadForecast()}>
-            {forecastBusy ? 'Refreshing…' : 'Refresh runoff forecast'}
+            {forecastBusy ? 'Refreshing…' : 'Refresh reservoir forecast'}
           </button>
         </div>
       )}
