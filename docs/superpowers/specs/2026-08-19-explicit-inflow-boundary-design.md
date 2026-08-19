@@ -20,7 +20,8 @@ Validation rules:
 - first point at minute 0;
 - timestamps strictly increasing;
 - flow values non-negative;
-- the final point covers at least `duration_minutes`.
+- the final point covers at least `duration_minutes`;
+- `duration_minutes` must be divisible by `dt_minutes` so reservoir and Muskingum calculations share one fixed model time grid.
 
 The request may use coarser timestamps than the simulation step. The scenario service linearly samples the hydrograph at each simulation timestamp.
 
