@@ -7,9 +7,9 @@ import {
   HeightReference,
   HorizontalOrigin,
   LabelStyle,
+  Math as CesiumMath,
   NearFarScalar,
   PolylineGlowMaterialProperty,
-  Rectangle,
   UrlTemplateImageryProvider,
   VerticalOrigin,
   Viewer,
@@ -94,7 +94,12 @@ export function createHydroViewer(container: HTMLElement): Viewer {
   if (viewer.scene.moon) viewer.scene.moon.show = false
 
   viewer.camera.setView({
-    destination: Rectangle.fromDegrees(-123.1, 37.5, -119.7, 41.25),
+    destination: Cartesian3.fromDegrees(-121.25, 39.35, 470_000),
+    orientation: {
+      heading: CesiumMath.toRadians(345),
+      pitch: CesiumMath.toRadians(-58),
+      roll: 0,
+    },
   })
 
   return viewer
