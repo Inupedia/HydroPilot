@@ -4,6 +4,13 @@ from hydropilot_api.main import app
 client = TestClient(app)
 
 
+def constant_inflow(flow_cms: float, duration_minutes: int) -> list[dict[str, float | int]]:
+    return [
+        {"timestamp_minutes": 0, "flow_cms": flow_cms},
+        {"timestamp_minutes": duration_minutes, "flow_cms": flow_cms},
+    ]
+
+
 def test_list_objects_supports_type_filter():
     response = client.get("/api/objects", params={"object_type": "reservoir"})
     assert response.status_code == 200
@@ -17,19 +24,42 @@ def test_downstream_endpoint_returns_hop_aware_network():
     assert [(item["object_id"], item["hop"]) for item in response.json()] == [("reach-002", 1), ("reach-003", 2), ("reach-004", 3)]
 
 
+def test_release_scenario_requires_explicit_inflow_boundary():
+    response = client.post(
+        "/api/scenarios/release",
+        json={"release_cms": 900, "duration_minutes": 60, "dt_minutes": 30, "max_hops": 2},
+    )
+    assert response.status_code == 422
+
+
 def test_release_scenario_persists_computed_state_shape():
-    response = client.post("/api/scenarios/release", json={"release_cms": 900, "duration_minutes": 60, "dt_minutes": 30, "max_hops": 2})
+    response = client.post(
+        "/api/scenarios/release",
+        json={
+            "release_cms": 900,
+            "duration_minutes": 60,
+            "dt_minutes": 30,
+            "max_hops": 2,
+            "inflow_hydrograph": constant_inflow(500, 60),
+        },
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["scenario_id"] == "scenario-release"
     variables = {state["variable"] for state in body["states"]}
-    assert {"storage", "level", "flow"}.issubset(variables)
+    assert {"storage", "inflow", "flow"}.issubset(variables)
 
 
 def test_release_scenario_remains_stable_across_supported_network_depth():
     response = client.post(
         "/api/scenarios/release",
-        json={"release_cms": 2200, "duration_minutes": 180, "dt_minutes": 30, "max_hops": 12},
+        json={
+            "release_cms": 2200,
+            "duration_minutes": 180,
+            "dt_minutes": 30,
+            "max_hops": 12,
+            "inflow_hydrograph": constant_inflow(1200, 180),
+        },
     )
     assert response.status_code == 200
     flow_states = [state for state in response.json()["states"] if state["variable"] == "flow"]
