@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, Field
@@ -64,6 +64,17 @@ class ToolCall(BaseModel):
     id: str = Field(min_length=1)
     name: str = Field(min_length=1)
     arguments: dict[str, Any]
+
+
+class ToolAssistantMessage(ChatMessage):
+    role: Literal["assistant"] = "assistant"
+    content: str | None = None
+    tool_calls: list[ToolCall] = Field(min_length=1)
+
+
+class ToolResultMessage(ChatMessage):
+    role: Literal["tool"] = "tool"
+    tool_call_id: str = Field(min_length=1)
 
 
 class ToolChatResponse(BaseModel):
@@ -210,8 +221,46 @@ def _openai_payload(request: ChatRequest) -> dict[str, Any]:
     return payload
 
 
+def _openai_tool_message_payload(message: ChatMessage) -> dict[str, Any]:
+    if isinstance(message, ToolAssistantMessage):
+        return {
+            "role": "assistant",
+            "content": message.content,
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(
+                            call.arguments,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
+                    },
+                }
+                for call in message.tool_calls
+            ],
+        }
+    if isinstance(message, ToolResultMessage):
+        return {
+            "role": "tool",
+            "tool_call_id": message.tool_call_id,
+            "content": message.content,
+        }
+    return message.model_dump()
+
+
 def _openai_tool_payload(request: ToolChatRequest) -> dict[str, Any]:
-    payload = _openai_payload(request)
+    payload: dict[str, Any] = {
+        "model": request.model,
+        "messages": [_openai_tool_message_payload(message) for message in request.messages],
+        "stream": False,
+    }
+    if request.temperature is not None:
+        payload["temperature"] = request.temperature
+    if request.max_tokens is not None:
+        payload["max_tokens"] = request.max_tokens
     payload["tools"] = [
         {
             "type": "function",
