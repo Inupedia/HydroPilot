@@ -63,6 +63,31 @@ export interface ScenarioHydrographPoint {
   timestamp_minutes: number
   flow_cms: number
 }
+export type ConstraintType = 'minimum' | 'maximum' | 'range' | 'ramp_rate'
+export interface ConstraintViolation {
+  constraint_id: string
+  object_id: string
+  variable: string
+  timestamp_minutes: number
+  value: number
+  unit: string
+  constraint_type: ConstraintType
+  min_value: number | null
+  max_value: number | null
+  source: string
+}
+export interface UnevaluatedConstraint {
+  constraint_id: string
+  object_id: string
+  variable: string
+  reason: string
+}
+export interface ReleaseScenarioResponse {
+  scenario_id: string
+  states: HydroState[]
+  violations: ConstraintViolation[]
+  unevaluated_constraints: UnevaluatedConstraint[]
+}
 
 function inTauri(): boolean {
   return Boolean(window.__TAURI_INTERNALS__)
@@ -121,18 +146,17 @@ export async function waitForApi(timeoutMs = 20_000): Promise<void> {
 export const hydroApi = {
   objects: () => getJson<HydroObject[]>('/api/objects'),
   downstream: (id: string, maxHops = 8) => getJson<NetworkPathItem[]>(`/api/network/${id}/downstream?max_hops=${maxHops}`),
-  async releaseScenario(
+  releaseScenario(
     inflow_hydrograph: ScenarioHydrographPoint[],
     release_hydrograph: ScenarioHydrographPoint[],
-  ): Promise<HydroState[]> {
-    const result = await postJson<{ states: HydroState[] }>('/api/scenarios/release', {
+  ): Promise<ReleaseScenarioResponse> {
+    return postJson<ReleaseScenarioResponse>('/api/scenarios/release', {
       duration_minutes: 180,
       dt_minutes: 30,
       max_hops: 6,
       inflow_hydrograph,
       release_hydrograph,
     })
-    return result.states
   },
   llmProviders: () => getJson<LlmProviderSummary[]>('/api/llm/providers'),
   llmChat: (request: LlmChatRequest) => postJson<LlmChatResponse>('/api/llm/chat', request),
