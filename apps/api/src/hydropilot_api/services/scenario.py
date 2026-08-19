@@ -198,6 +198,63 @@ def _constraint_is_violated(constraint: HydroConstraint, value: float) -> bool:
     return False
 
 
+def _evaluate_ramp_rate_constraint(
+    constraint: HydroConstraint,
+    matching_states: list[HydroState],
+) -> tuple[list[ConstraintViolation], UnevaluatedConstraint | None]:
+    if len(matching_states) < 2:
+        return [], UnevaluatedConstraint(
+            constraint_id=constraint.id,
+            object_id=constraint.object_id,
+            variable=constraint.variable,
+            reason="ramp-rate constraint requires at least two matching states",
+        )
+
+    state_units = {state.unit for state in matching_states}
+    if len(state_units) != 1:
+        raise ValueError(f"scenario states have inconsistent units for {constraint.id}")
+
+    state_unit = next(iter(state_units))
+    expected_unit = f"{state_unit}/h"
+    if constraint.unit != expected_unit:
+        return [], UnevaluatedConstraint(
+            constraint_id=constraint.id,
+            object_id=constraint.object_id,
+            variable=constraint.variable,
+            reason=f"ramp-rate unit {constraint.unit} is unsupported; expected {expected_unit}",
+        )
+
+    violations: list[ConstraintViolation] = []
+    for current, following in zip(matching_states, matching_states[1:]):
+        elapsed_minutes = following.timestamp_minutes - current.timestamp_minutes
+        if elapsed_minutes <= 0:
+            return [], UnevaluatedConstraint(
+                constraint_id=constraint.id,
+                object_id=constraint.object_id,
+                variable=constraint.variable,
+                reason="ramp-rate constraint requires strictly increasing state timestamps",
+            )
+        elapsed_hours = elapsed_minutes / 60.0
+        rate = abs(following.value - current.value) / elapsed_hours
+        if rate > float(constraint.max_value):
+            violations.append(
+                ConstraintViolation(
+                    constraint_id=constraint.id,
+                    object_id=constraint.object_id,
+                    variable=constraint.variable,
+                    timestamp_minutes=following.timestamp_minutes,
+                    value=rate,
+                    unit=constraint.unit,
+                    constraint_type=constraint.constraint_type,
+                    min_value=constraint.min_value,
+                    max_value=constraint.max_value,
+                    source=constraint.source,
+                )
+            )
+
+    return violations, None
+
+
 def _evaluate_constraints(
     repo: HydroRepository,
     states: list[HydroState],
@@ -222,17 +279,6 @@ def _evaluate_constraints(
                 )
                 continue
 
-            if constraint.constraint_type is ConstraintType.RAMP_RATE:
-                unevaluated.append(
-                    UnevaluatedConstraint(
-                        constraint_id=constraint.id,
-                        object_id=constraint.object_id,
-                        variable=constraint.variable,
-                        reason="ramp-rate constraints are not evaluated",
-                    )
-                )
-                continue
-
             matching_states = sorted(
                 by_object_variable.get((constraint.object_id, constraint.variable), []),
                 key=lambda state: state.timestamp_minutes,
@@ -246,6 +292,16 @@ def _evaluate_constraints(
                         reason="scenario has no matching state variable",
                     )
                 )
+                continue
+
+            if constraint.constraint_type is ConstraintType.RAMP_RATE:
+                ramp_violations, ramp_unevaluated = _evaluate_ramp_rate_constraint(
+                    constraint,
+                    matching_states,
+                )
+                violations.extend(ramp_violations)
+                if ramp_unevaluated is not None:
+                    unevaluated.append(ramp_unevaluated)
                 continue
 
             for state in matching_states:

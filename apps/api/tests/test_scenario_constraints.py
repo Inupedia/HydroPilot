@@ -65,7 +65,7 @@ class ConstraintScenarioRepository:
         return sorted(values, key=lambda item: item.id)
 
 
-def request() -> ReleaseScenarioRequest:
+def request(*, start_release: float = 20, end_release: float = 80) -> ReleaseScenarioRequest:
     return ReleaseScenarioRequest(
         reservoir_id="reservoir-alpha",
         duration_minutes=60,
@@ -76,8 +76,8 @@ def request() -> ReleaseScenarioRequest:
             HydrographPoint(timestamp_minutes=60, flow_cms=100),
         ],
         release_hydrograph=[
-            HydrographPoint(timestamp_minutes=0, flow_cms=20),
-            HydrographPoint(timestamp_minutes=60, flow_cms=80),
+            HydrographPoint(timestamp_minutes=0, flow_cms=start_release),
+            HydrographPoint(timestamp_minutes=60, flow_cms=end_release),
         ],
     )
 
@@ -127,20 +127,84 @@ def test_unconditional_min_max_range_report_only_real_violations():
     assert result.unevaluated_constraints == []
 
 
-def test_conditional_ramp_and_missing_variable_are_explicitly_unevaluated():
+def test_supported_hourly_ramp_rate_reports_adjacent_rate_violations_without_mutating_states():
+    repo = ConstraintScenarioRepository(
+        [
+            constraint(
+                "ramp-release",
+                constraint_type=ConstraintType.RAMP_RATE,
+                max_value=59,
+                unit="m3/s/h",
+            )
+        ]
+    )
+
+    result = run_release_scenario(repo, request())
+
+    assert [
+        (item.timestamp_minutes, item.value, item.unit)
+        for item in result.violations
+    ] == [
+        (30, pytest.approx(60), "m3/s/h"),
+        (60, pytest.approx(60), "m3/s/h"),
+    ]
+    assert result.unevaluated_constraints == []
+    assert [state.value for state in result.states if state.object_id == "reservoir-alpha" and state.variable == "release"] == pytest.approx([20, 50, 80])
+
+
+def test_hourly_ramp_rate_allows_equality_at_limit():
+    repo = ConstraintScenarioRepository(
+        [
+            constraint(
+                "ramp-release",
+                constraint_type=ConstraintType.RAMP_RATE,
+                max_value=60,
+                unit="m3/s/h",
+            )
+        ]
+    )
+
+    result = run_release_scenario(repo, request())
+
+    assert result.violations == []
+    assert result.unevaluated_constraints == []
+
+
+def test_hourly_ramp_rate_uses_absolute_change_for_decreasing_values():
+    repo = ConstraintScenarioRepository(
+        [
+            constraint(
+                "ramp-release",
+                constraint_type=ConstraintType.RAMP_RATE,
+                max_value=59,
+                unit="m3/s/h",
+            )
+        ]
+    )
+
+    result = run_release_scenario(repo, request(start_release=80, end_release=20))
+
+    assert [(item.timestamp_minutes, item.value) for item in result.violations] == [
+        (30, pytest.approx(60)),
+        (60, pytest.approx(60)),
+    ]
+
+
+def test_conditional_unsupported_ramp_and_missing_variable_are_explicitly_unevaluated():
     repo = ConstraintScenarioRepository(
         [
             constraint(
                 "conditional-release",
-                constraint_type=ConstraintType.MAXIMUM,
+                constraint_type=ConstraintType.RAMP_RATE,
                 max_value=10,
+                unit="m3/s/h",
                 active_when={"season": "flood"},
             ),
             constraint(
                 "ramp-release",
                 constraint_type=ConstraintType.RAMP_RATE,
                 max_value=10,
-                unit="m3/s/h",
+                unit="m3/s/min",
             ),
             constraint(
                 "missing-variable",
@@ -157,7 +221,7 @@ def test_conditional_ramp_and_missing_variable_are_explicitly_unevaluated():
     assert [(item.constraint_id, item.reason) for item in result.unevaluated_constraints] == [
         ("conditional-release", "conditional constraints are not evaluated"),
         ("missing-variable", "scenario has no matching state variable"),
-        ("ramp-release", "ramp-rate constraints are not evaluated"),
+        ("ramp-release", "ramp-rate unit m3/s/min is unsupported; expected m3/s/h"),
     ]
 
 
