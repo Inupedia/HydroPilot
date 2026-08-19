@@ -86,12 +86,26 @@ def test_fixed_release_remains_backward_compatible_when_response_fraction_is_zer
     assert result.summary.release_response_fraction == 0
 
 
+def test_routing_horizon_extends_zero_rainfall_tail_without_changing_storm_total():
+    repo = FixtureHydroRepository(FIXTURE_PATH)
+    result = run_reservoir_rainfall_forecast(
+        repo,
+        request(routing_horizon_minutes=1080),
+    )
+
+    assert result.runoff.horizon_minutes == 1080
+    assert result.runoff.summary.total_rainfall_mm == pytest.approx(34)
+    assert result.runoff.runoff[-1].timestamp_minutes == 1080
+    assert result.runoff.runoff[-1].rainfall_mm == 0
+
+
 def test_responsive_release_turns_rainfall_forecast_into_dynamic_downstream_wave():
     repo = FixtureHydroRepository(FIXTURE_PATH)
     result = run_reservoir_rainfall_forecast(
         repo,
         request(
             max_hops=20,
+            routing_horizon_minutes=1080,
             release_response_fraction=0.65,
             max_release_cms=4000,
         ),
@@ -125,6 +139,13 @@ def test_responsive_release_turns_rainfall_forecast_into_dynamic_downstream_wave
 def test_responsive_release_cap_cannot_be_lower_than_baseline_release():
     with pytest.raises(ValidationError, match="max_release_cms"):
         request(release_cms=1500, max_release_cms=1400)
+
+
+def test_routing_horizon_must_cover_rainfall_and_match_time_grid():
+    with pytest.raises(ValidationError, match="cannot end before rainfall"):
+        request(routing_horizon_minutes=150)
+    with pytest.raises(ValidationError, match="divisible"):
+        request(routing_horizon_minutes=185)
 
 
 def test_full_network_forecast_reaches_terminal_reach_and_control_point():
