@@ -23,6 +23,7 @@ export default function App() {
   const [states, setStates] = useState<HydroState[]>([])
   const [timestamp, setTimestamp] = useState(0)
   const [releaseCms, setReleaseCms] = useState(2200)
+  const [inflowCms, setInflowCms] = useState(1000)
   const [busyAction, setBusyAction] = useState('')
   const [actionStatus, setActionStatus] = useState('Ready — try one of the guided actions below.')
   const [actionTone, setActionTone] = useState<Tone>('idle')
@@ -113,17 +114,21 @@ export default function App() {
   }, [focusHighlighted, status])
 
   const runScenario = useCallback(async (flow = releaseCms) => {
-    setBusyAction('scenario'); status(`Running reservoir + Muskingum routing at ${flow.toLocaleString()} m³/s…`, 'working')
+    const inflowHydrograph = [
+      { timestamp_minutes: 0, flow_cms: inflowCms },
+      { timestamp_minutes: 180, flow_cms: inflowCms },
+    ]
+    setBusyAction('scenario'); status(`Running 0D + 1D scenario: inflow ${inflowCms.toLocaleString()} m³/s, release ${flow.toLocaleString()} m³/s…`, 'working')
     try {
-      const next = await hydroApi.releaseScenario(flow)
+      const next = await hydroApi.releaseScenario(flow, inflowHydrograph)
       setStates(next)
       const nextTimes = [...new Set(next.map((item) => item.timestamp_minutes))].sort((a, b) => a - b)
       setTimestamp(nextTimes[0] ?? 0)
-      status(`Scenario ready: ${nextTimes.length} time steps. Use the timeline at the bottom of the map.`, 'success')
+      status(`Scenario ready: ${nextTimes.length} time steps with an explicit ${inflowCms.toLocaleString()} m³/s inflow boundary.`, 'success')
       return nextTimes.length
     } catch (error) { status(`Scenario failed: ${error instanceof Error ? error.message : String(error)}`, 'error'); throw error }
     finally { setBusyAction('') }
-  }, [releaseCms, status])
+  }, [inflowCms, releaseCms, status])
 
   async function selectProvider(providerId: string) {
     setSelectedProvider(providerId)
@@ -154,12 +159,12 @@ export default function App() {
         const count = await highlightDownstream(); addMessage('assistant', `Done. I highlighted ${count} objects in the downstream chain.`); return
       }
       if (command.type === 'run-release') {
-        setReleaseCms(command.releaseCms); await runScenario(command.releaseCms); addMessage('assistant', `Done. The ${command.releaseCms.toLocaleString()} m³/s release scenario is on the map. Drag the timeline to inspect propagation.`); return
+        setReleaseCms(command.releaseCms); await runScenario(command.releaseCms); addMessage('assistant', `Done. I ran the ${command.releaseCms.toLocaleString()} m³/s release against the current ${inflowCms.toLocaleString()} m³/s inflow boundary. Drag the timeline to inspect propagation.`); return
       }
       if (!providerReady) {
         setProviderSettingsOpen(true); addMessage('assistant', 'This question needs an LLM. Choose a provider, model, and API key first. Map-control commands work without an LLM.'); return
       }
-      const system = `You are HydroPilot, a concise water-network GIS copilot. This is a public-data demonstrator, not operational flood-control decision support. Current scene: ${objects.length} objects, ${riverCount} river reaches, ${assetCount} engineering assets. Current scenario time: ${timestamp} minutes. ${currentFlow == null ? 'No routing scenario is active.' : `Peak visible flow is ${currentFlow.toFixed(0)} m3/s.`}`
+      const system = `You are HydroPilot, a concise water-network GIS copilot. This is a public-data demonstrator, not operational flood-control decision support. Current scene: ${objects.length} objects, ${riverCount} river reaches, ${assetCount} engineering assets. Current scenario time: ${timestamp} minutes. Manual reservoir inflow boundary: ${inflowCms} m3/s. ${currentFlow == null ? 'No routing scenario is active.' : `Peak visible flow is ${currentFlow.toFixed(0)} m3/s.`}`
       const response = await hydroApi.llmChat({ provider: selectedProvider, model: selectedModel.trim(), api_key: apiKey.trim() || undefined, base_url: customBaseUrl.trim() || undefined, messages: [{ role: 'system', content: system }, ...copilotMessages.slice(-5).filter((message) => message.role !== 'system'), { role: 'user', content: prompt }], temperature: 0.2, max_tokens: 1200 })
       addMessage('assistant', response.text)
     } catch (error) { addMessage('assistant', `Request failed: ${error instanceof Error ? error.message : String(error)}`) }
@@ -192,7 +197,7 @@ export default function App() {
         </section>
         <div className={`action-feedback ${actionTone}`} data-testid="action-feedback"><span className="feedback-dot"/><p>{actionStatus}</p></div>
         <section className="panel-section"><h2>1 · Network topology</h2><button data-testid="highlight-downstream" className="action primary" disabled={busyAction === 'highlight'} onClick={() => void highlightDownstream()}>{busyAction === 'highlight' ? 'Tracing network…' : 'Highlight downstream chain'}</button><p className="helper">Expected result: the chain turns yellow and the camera flies to it.</p></section>
-        <section className="panel-section"><h2>2 · Release scenario</h2><label className="field-label" htmlFor="release">Reservoir release</label><div className="release-field"><input id="release" value={releaseCms} onChange={(event) => setReleaseCms(Number(event.target.value))} type="number" min="0" step="100"/><span>m³/s</span></div><button data-testid="run-scenario" className="action warning" disabled={busyAction === 'scenario'} onClick={() => void runScenario()}>{busyAction === 'scenario' ? 'Running scenario…' : 'Run 0D + 1D scenario'}</button><p className="helper">River colors/widths update and a timeline appears.</p></section>
+        <section className="panel-section"><h2>2 · Release scenario</h2><label className="field-label" htmlFor="inflow">Reservoir inflow boundary</label><div className="release-field"><input id="inflow" value={inflowCms} onChange={(event) => setInflowCms(Number(event.target.value))} type="number" min="0" step="100"/><span>m³/s</span></div><label className="field-label" htmlFor="release">Reservoir release</label><div className="release-field"><input id="release" value={releaseCms} onChange={(event) => setReleaseCms(Number(event.target.value))} type="number" min="1" step="100"/><span>m³/s</span></div><button data-testid="run-scenario" className="action warning" disabled={busyAction === 'scenario'} onClick={() => void runScenario()}>{busyAction === 'scenario' ? 'Running scenario…' : 'Run 0D + 1D scenario'}</button><p className="helper">The 180-minute demo uses the visible inflow as an explicit constant boundary; release is the control input.</p></section>
         <div className="status-card" data-testid="scenario-status"><span>Reservoir storage</span><strong>{storageState ? `${(storageState.value / 1e9).toFixed(2)} B m³` : 'Run scenario'}</strong></div>
         <div className="legend"><span><i className="legend-line river"/>River</span><span><i className="legend-dot reservoir"/>Reservoir</span><span><i className="legend-dot dam"/>Dam</span><span><i className="legend-dot gauge"/>Gauge</span><span><i className="legend-dot control"/>Control point</span></div>
       </aside>
