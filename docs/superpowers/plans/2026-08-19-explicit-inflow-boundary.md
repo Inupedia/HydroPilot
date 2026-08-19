@@ -14,10 +14,11 @@ Add tests proving:
 
 1. a request requires at least two inflow points covering the scenario horizon;
 2. timestamps must start at zero and strictly increase;
-3. linear sampling produces expected intermediate flows;
-4. reservoir storage uses the supplied hydrograph rather than any function of release;
-5. result states include the sampled inflow series;
-6. the HTTP scenario test sends the new required boundary.
+3. simulation duration must align with the configured model time step;
+4. linear sampling produces expected intermediate flows;
+5. reservoir storage uses the supplied hydrograph rather than any function of release;
+6. result states include the sampled inflow series;
+7. the HTTP scenario test sends the new required boundary.
 
 Expected state: tests fail because the request has no inflow hydrograph contract and the service still computes `release_cms * 0.6`.
 
@@ -26,7 +27,7 @@ Expected state: tests fail because the request has no inflow hydrograph contract
 Implement only the required boundary behavior:
 
 - `HydrographPoint`;
-- request validation;
+- request and time-grid validation;
 - piecewise-linear sampling helper;
 - trapezoidal interval inflow passed to `ReservoirStep`;
 - `inflow` result states;
@@ -36,8 +37,8 @@ Do not add forecast providers or dispatch schedules.
 
 ## Task 3 — GREEN Studio
 
-- extend `hydroApi.releaseScenario` to accept an inflow value and send a two-point constant hydrograph for the demo horizon;
-- add a visible inflow input to the release scenario panel;
+- extend `hydroApi.releaseScenario` to accept an explicit hydrograph;
+- have the visible inflow field construct a two-point constant hydrograph for the 180-minute demo horizon;
 - include inflow in scenario status text.
 
 ## Task 4 — verification
