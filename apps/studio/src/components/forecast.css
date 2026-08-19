@@ -6,7 +6,9 @@
 .timeline.forecast-timeline .forecast-badge{display:inline-flex;align-items:center;padding:4px 7px;border-radius:999px;border:1px solid rgba(84,227,184,.28);background:rgba(8,79,61,.38);color:#82f3ce;font-size:8px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
 .timeline.forecast-timeline .forecast-badge.loading{border-color:rgba(255,206,107,.3);background:rgba(95,63,8,.38);color:#ffd879}
 .forecast-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.forecast-summary-grid.reservoir-summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
 .forecast-stat{padding:8px 10px;border:1px solid rgba(91,194,229,.16);border-radius:10px;background:rgba(5,28,43,.72)}
+.reservoir-storage-stat{border-color:rgba(126,238,194,.2);background:linear-gradient(180deg,rgba(6,46,48,.72),rgba(5,28,43,.72))}
 .timeline.forecast-timeline .forecast-stat span{display:block;margin-bottom:4px;color:#75a6b7;font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
 .forecast-stat strong{display:block;color:#eefcff;font-size:14px;line-height:1.05}
 .forecast-stat small{display:block;margin-top:3px;color:#72e6c0;font-size:8.5px;font-weight:800}
@@ -35,10 +37,12 @@
 .forecast-series-legend i{width:18px;height:2px;border-radius:2px;background:#4ed8ff}
 .forecast-series-legend i.predicted{background:repeating-linear-gradient(90deg,#7cf0bf 0 5px,transparent 5px 8px)}
 .forecast-scenario-row{display:grid;grid-template-columns:auto minmax(120px,1fr) auto;gap:10px;align-items:center;padding-top:2px;border-top:1px solid rgba(105,190,220,.1)}
+.forecast-scenario-row.scenario-empty{grid-template-columns:minmax(0,1fr) auto}
 .timeline.forecast-timeline .forecast-scenario-row span{color:#96becb;font-size:9px;font-weight:800}
 .forecast-scenario-row input{width:100%;accent-color:#43d5ff}
 .forecast-refresh{padding:5px 8px;border:1px solid rgba(82,204,241,.24);border-radius:7px;background:rgba(7,49,68,.76);color:#bfeeff;font-size:8.5px;font-weight:800;cursor:pointer}
 .forecast-refresh:disabled{opacity:.5;cursor:progress}
 .forecast-error{padding:10px 12px;border:1px solid rgba(255,105,105,.24);border-radius:9px;background:rgba(78,18,27,.5);color:#ffc1c1;font-size:9px;line-height:1.45}
 .timeline.forecast-timeline .forecast-provenance{max-width:62%;white-space:normal;color:#5f8999;font-size:7.5px;font-weight:600;line-height:1.35;text-align:right}
-@media(max-width:900px){.forecast-summary-grid{grid-template-columns:1fr 1fr}.forecast-stat:last-child{grid-column:1/-1}.forecast-chart-wrap{height:90px}.rainfall-strip{grid-template-columns:1fr}.rainfall-strip-label,.rainfall-total{display:none}.forecast-scenario-row{grid-template-columns:1fr}.forecast-refresh{width:100%}.forecast-legend-row{align-items:flex-start;flex-direction:column}.timeline.forecast-timeline .forecast-provenance{max-width:none;text-align:left}}
+@media(max-width:1100px){.forecast-summary-grid.reservoir-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:900px){.forecast-summary-grid{grid-template-columns:1fr 1fr}.forecast-summary-grid.reservoir-summary-grid{grid-template-columns:1fr 1fr}.forecast-chart-wrap{height:90px}.rainfall-strip{grid-template-columns:1fr}.rainfall-strip-label,.rainfall-total{display:none}.forecast-scenario-row{grid-template-columns:1fr}.forecast-scenario-row.scenario-empty{grid-template-columns:1fr}.forecast-refresh{width:100%}.forecast-legend-row{align-items:flex-start;flex-direction:column}.timeline.forecast-timeline .forecast-provenance{max-width:none;text-align:left}}
