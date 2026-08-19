@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from typing import Protocol
-from hydropilot_api.domain import CurveType, HydroCurve, HydroObject, HydroRelation, ObjectType
+from hydropilot_api.domain import (
+    CurveType,
+    HydroConstraint,
+    HydroCurve,
+    HydroObject,
+    HydroRelation,
+    ObjectType,
+)
 
 
 class HydroRepository(Protocol):
@@ -13,3 +20,8 @@ class HydroRepository(Protocol):
         object_id: str | None = None,
         curve_type: CurveType | None = None,
     ) -> list[HydroCurve]: ...
+    def list_constraints(
+        self,
+        object_id: str | None = None,
+        variable: str | None = None,
+    ) -> list[HydroConstraint]: ...
