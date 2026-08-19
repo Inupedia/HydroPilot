@@ -3,13 +3,14 @@
 ## File structure
 
 - `apps/api/src/hydropilot_api/agent.py` — fixed budget constants, deterministic serialization, per-result/round/run checks.
-- `apps/api/tests/test_agent.py` — RED/GREEN oversized-result and aggregate-budget behavior.
+- `apps/api/tests/test_agent_result_budget.py` — RED/GREEN oversized-result and aggregate-budget behavior.
+- `apps/api/tests/test_agent.py` — existing normal Agent regression coverage remains authoritative.
 
 ## Task 1 — RED
 
 Prove:
 
-1. normal `get_object` execution remains unchanged;
+1. existing normal `get_object` execution remains unchanged through existing Agent tests;
 2. one tool result over 24,000 serialized characters raises `ValueError` before a second provider request;
 3. multiple results each under 24,000 but together over 48,000 in one round raise before follow-up;
 4. results accumulated across multiple tool rounds cannot exceed 96,000;
