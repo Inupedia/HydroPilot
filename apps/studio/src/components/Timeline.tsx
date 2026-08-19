@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { hydroApi, type FlowObservation, type ReservoirRainfallForecastResponse } from '../api/client'
+import { forecastTimestamps } from '../cesium/forecastScene'
+import type { HydroState } from '../types'
 import { demoForecastHistory, demoRainfallForecast, forecastChartGeometry, formatArrival, polylinePoints } from './forecastView'
 import './forecast.css'
+
+export type ScenePreviewMode = 'forecast' | 'scenario'
 
 interface TimelineProps {
   timestamps: number[]
   timestamp: number
   inflowCms: number
   releaseCms: number
+  forecastTimestamp: number
+  sceneMode: ScenePreviewMode
   onChange: (value: number) => void
+  onForecastStates: (states: HydroState[]) => void
+  onForecastTimestampChange: (value: number) => void
+  onSceneModeChange: (mode: ScenePreviewMode) => void
 }
 
 const CHART_WIDTH = 640
@@ -17,12 +26,24 @@ const CATCHMENT_AREA_KM2 = 8000
 const RUNOFF_COEFFICIENT = 0.18
 const RESPONSE_TIME_HOURS = 8
 
-export default function Timeline({ timestamps, timestamp, inflowCms, releaseCms, onChange }: TimelineProps) {
+export default function Timeline({
+  timestamps,
+  timestamp,
+  inflowCms,
+  releaseCms,
+  forecastTimestamp,
+  sceneMode,
+  onChange,
+  onForecastStates,
+  onForecastTimestampChange,
+  onSceneModeChange,
+}: TimelineProps) {
   const requestVersion = useRef(0)
   const [history, setHistory] = useState<FlowObservation[]>([])
   const [forecast, setForecast] = useState<ReservoirRainfallForecastResponse | null>(null)
   const [forecastBusy, setForecastBusy] = useState(false)
   const [forecastError, setForecastError] = useState('')
+  const [forecastPlaying, setForecastPlaying] = useState(false)
 
   const loadForecast = useCallback(async () => {
     const version = ++requestVersion.current
@@ -43,18 +64,22 @@ export default function Timeline({ timestamps, timestamp, inflowCms, releaseCms,
         runoff_coefficient: RUNOFF_COEFFICIENT,
         response_time_hours: RESPONSE_TIME_HOURS,
         baseflow_cms: inflowCms * 0.57,
-        max_hops: 6,
+        max_hops: 12,
       })
       if (version !== requestVersion.current) return
+      const nextTimes = forecastTimestamps(nextForecast.scenario.states)
       setHistory(nextHistory)
       setForecast(nextForecast)
+      onForecastStates(nextForecast.scenario.states)
+      onForecastTimestampChange(nextTimes[0] ?? 0)
+      onSceneModeChange('forecast')
     } catch (error) {
       if (version !== requestVersion.current) return
       setForecastError(error instanceof Error ? error.message : String(error))
     } finally {
       if (version === requestVersion.current) setForecastBusy(false)
     }
-  }, [inflowCms, releaseCms])
+  }, [inflowCms, releaseCms, onForecastStates, onForecastTimestampChange, onSceneModeChange])
 
   useEffect(() => { void loadForecast() }, [loadForecast])
 
@@ -62,11 +87,26 @@ export default function Timeline({ timestamps, timestamp, inflowCms, releaseCms,
     if (!forecast || !history.length) return null
     return forecastChartGeometry(history, forecast.runoff.runoff, CHART_WIDTH, CHART_HEIGHT)
   }, [forecast, history])
+  const previewTimes = useMemo(() => forecastTimestamps(forecast?.scenario.states ?? []), [forecast])
+
+  useEffect(() => {
+    if (!forecastPlaying || !previewTimes.length) return
+    const timer = window.setInterval(() => {
+      onSceneModeChange('forecast')
+      const index = previewTimes.indexOf(forecastTimestamp)
+      const nextIndex = index < 0 || index >= previewTimes.length - 1 ? 0 : index + 1
+      onForecastTimestampChange(previewTimes[nextIndex])
+    }, 900)
+    return () => window.clearInterval(timer)
+  }, [forecastPlaying, forecastTimestamp, onForecastTimestampChange, onSceneModeChange, previewTimes])
 
   const hasScenario = timestamps.length > 0
   const min = timestamps[0] ?? 0
   const max = timestamps[timestamps.length - 1] ?? 180
   const step = Math.max(1, timestamps[1] ? timestamps[1] - timestamps[0] : 30)
+  const previewMin = previewTimes[0] ?? 0
+  const previewMax = previewTimes[previewTimes.length - 1] ?? 180
+  const previewStep = Math.max(1, previewTimes[1] ? previewTimes[1] - previewTimes[0] : 30)
   const runoffSummary = forecast?.runoff.summary
   const reservoirSummary = forecast?.summary
   const peakChange = runoffSummary?.peak_change_pct == null ? null : `${runoffSummary.peak_change_pct >= 0 ? '+' : ''}${runoffSummary.peak_change_pct.toFixed(1)}% vs now`
@@ -142,6 +182,28 @@ export default function Timeline({ timestamps, timestamp, inflowCms, releaseCms,
         <div className="rainfall-total"><strong>{runoffSummary ? `${runoffSummary.total_rainfall_mm.toFixed(0)} mm` : '—'}</strong><small>3h total</small></div>
       </div>
 
+      <div className="cesium-preplay" data-testid="cesium-preplay">
+        <div className="cesium-preplay-heading"><strong>CESIUM 3D PREPLAY</strong><small>flow walls · glow ribbons · reservoir volume</small></div>
+        <div className="preplay-mode-switch" aria-label="3D scene mode">
+          <button className={sceneMode === 'forecast' ? 'active' : ''} type="button" onClick={() => onSceneModeChange('forecast')}>Forecast</button>
+          <button className={sceneMode === 'scenario' ? 'active' : ''} type="button" disabled={!hasScenario} onClick={() => { setForecastPlaying(false); onSceneModeChange('scenario') }}>Scenario</button>
+        </div>
+        <button className={`preplay-play ${forecastPlaying ? 'active' : ''}`} type="button" disabled={!previewTimes.length} onClick={() => { onSceneModeChange('forecast'); setForecastPlaying((value) => !value) }}>
+          {forecastPlaying ? 'Pause' : '▶ Play'}
+        </button>
+        <input
+          aria-label="Forecast 3D preview time"
+          type="range"
+          min={previewMin}
+          max={previewMax}
+          step={previewStep}
+          value={forecastTimestamp}
+          disabled={!previewTimes.length}
+          onChange={(event) => { setForecastPlaying(false); onSceneModeChange('forecast'); onForecastTimestampChange(Number(event.target.value)) }}
+        />
+        <span className="preplay-time">T+{forecastTimestamp} min</span>
+      </div>
+
       <div className="forecast-legend-row">
         <div className="forecast-series-legend"><span><i/>Demo pre-NOW inflow</span><span><i className="predicted"/>Rainfall-driven inflow</span></div>
         <span className="forecast-provenance">Demo rainfall + uncalibrated basin assumptions ({CATCHMENT_AREA_KM2.toLocaleString()} km² · C={RUNOFF_COEFFICIENT} · K={RESPONSE_TIME_HOURS}h). Pre-NOW history is scaled from the explicit inflow boundary. No reservoir level is forecast without a level-storage curve.</span>
@@ -157,7 +219,7 @@ export default function Timeline({ timestamps, timestamp, inflowCms, releaseCms,
             max={max}
             step={step}
             value={timestamp}
-            onChange={(event) => onChange(Number(event.target.value))}
+            onChange={(event) => { setForecastPlaying(false); onSceneModeChange('scenario'); onChange(Number(event.target.value)) }}
           />
           <button className="forecast-refresh" type="button" disabled={forecastBusy} onClick={() => void loadForecast()}>
             {forecastBusy ? 'Refreshing…' : 'Refresh reservoir forecast'}
