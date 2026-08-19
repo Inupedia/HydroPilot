@@ -207,7 +207,7 @@ def run_read_only_agent(
                 AgentToolExecution(
                     call_id=call.id,
                     name=call.name,
-                    arguments=call.arguments,
+                    arguments=tool_response.arguments,
                     result=tool_response.result,
                 )
             )

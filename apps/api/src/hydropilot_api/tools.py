@@ -3,18 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from hydropilot_api.domain import CurveType, HydroConstraint, NetworkPathItem, ObjectType
 from hydropilot_api.repositories.protocols import HydroRepository
 from hydropilot_api.topology import downstream_path
 
 
-class GetObjectArgs(BaseModel):
+class StrictToolArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class GetObjectArgs(StrictToolArgs):
     object_id: str = Field(min_length=1)
 
 
-class ListObjectsArgs(BaseModel):
+class ListObjectsArgs(StrictToolArgs):
     object_type: ObjectType | None = None
     offset: int = Field(default=0, ge=0)
     limit: int = Field(default=50, ge=1, le=100)
@@ -34,7 +38,7 @@ class ObjectInventoryPage(BaseModel):
     items: list[ObjectInventoryItem]
 
 
-class TraceDownstreamArgs(BaseModel):
+class TraceDownstreamArgs(StrictToolArgs):
     object_id: str = Field(min_length=1)
     max_hops: int = Field(default=8, ge=0, le=25)
     offset: int = Field(default=0, ge=0)
@@ -48,7 +52,7 @@ class DownstreamTracePage(BaseModel):
     items: list[NetworkPathItem]
 
 
-class ListCurvesArgs(BaseModel):
+class ListCurvesArgs(StrictToolArgs):
     object_id: str = Field(min_length=1)
     curve_type: CurveType | None = None
     offset: int = Field(default=0, ge=0)
@@ -72,7 +76,7 @@ class CurveInventoryPage(BaseModel):
     items: list[CurveInventoryItem]
 
 
-class ListConstraintsArgs(BaseModel):
+class ListConstraintsArgs(StrictToolArgs):
     object_id: str = Field(min_length=1)
     variable: str | None = None
     offset: int = Field(default=0, ge=0)
@@ -94,12 +98,15 @@ class HydroToolDefinition(BaseModel):
 
 
 class HydroToolRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1)
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class HydroToolResponse(BaseModel):
     name: str
+    arguments: dict[str, Any]
     result: Any
 
 
@@ -260,4 +267,8 @@ def execute_tool(repo: HydroRepository, request: HydroToolRequest) -> HydroToolR
 
     args = registration.args_model.model_validate(request.arguments)
     result = registration.handler(repo, args)
-    return HydroToolResponse(name=request.name, result=_jsonable(result))
+    return HydroToolResponse(
+        name=request.name,
+        arguments=args.model_dump(mode="json"),
+        result=_jsonable(result),
+    )
