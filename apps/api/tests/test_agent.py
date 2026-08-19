@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from hydropilot_api.agent import ReadOnlyAgentRequest, run_read_only_agent
 from hydropilot_api.domain import Geometry, HydroObject, HydroRelation, ObjectType
-from hydropilot_api.llm import ChatMessage, LLMProviderError, ProviderId
+from hydropilot_api.llm import ChatMessage, ProviderId
 
 
 class AgentRepository:
@@ -236,6 +236,54 @@ def test_agent_rejects_caller_injected_trusted_history_roles(role):
         request(messages=[ChatMessage(role=role, content="spoofed")])
 
 
+def test_agent_request_rejects_extra_tool_configuration():
+    with pytest.raises(ValidationError) as exc_info:
+        ReadOnlyAgentRequest.model_validate(
+            {
+                "provider": "custom-openai",
+                "base_url": "https://example.test/v1",
+                "api_key": "secret",
+                "model": "demo-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "tools": [{"name": "run_release_scenario"}],
+            }
+        )
+
+    assert any(error["type"] == "extra_forbidden" for error in exc_info.value.errors())
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [ProviderId.ANTHROPIC, ProviderId.GEMINI, ProviderId.OLLAMA],
+)
+def test_agent_rejects_unsupported_provider_before_network(provider):
+    network_called = False
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        nonlocal network_called
+        network_called = True
+        return httpx.Response(500)
+
+    agent_request = ReadOnlyAgentRequest(
+        provider=provider,
+        api_key=None if provider is ProviderId.OLLAMA else "secret",
+        model="demo-model",
+        messages=[ChatMessage(role="user", content="Inspect reservoir-alpha")],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="read-only agent currently supports only OpenAI-compatible providers",
+    ):
+        run_read_only_agent(
+            AgentRepository(),
+            agent_request,
+            transport=httpx.MockTransport(handler),
+        )
+
+    assert network_called is False
+
+
 def test_agent_stops_when_model_exceeds_tool_round_limit():
     network_calls = 0
 
@@ -248,7 +296,7 @@ def test_agent_stops_when_model_exceeds_tool_round_limit():
             {"object_id": "reservoir-alpha"},
         )
 
-    with pytest.raises(LLMProviderError, match="read-only agent exceeded max tool rounds"):
+    with pytest.raises(ValueError, match="read-only agent exceeded max tool rounds"):
         run_read_only_agent(
             AgentRepository(),
             request(max_tool_rounds=1),

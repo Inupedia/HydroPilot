@@ -4,13 +4,15 @@ import json
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from hydropilot_api.llm import (
+    AdapterFamily,
     ChatMessage,
     ChatRequest,
     FunctionToolDefinition,
     LLMProviderError,
+    PROVIDERS,
     ProviderId,
     ToolAssistantMessage,
     ToolChatRequest,
@@ -38,6 +40,8 @@ READ_ONLY_AGENT_SYSTEM_PROMPT = (
 
 
 class ReadOnlyAgentRequest(ChatRequest):
+    model_config = ConfigDict(extra="forbid")
+
     max_tool_rounds: int = Field(default=4, ge=1, le=8)
 
     @model_validator(mode="after")
@@ -107,6 +111,10 @@ def run_read_only_agent(
     *,
     transport: httpx.BaseTransport | None = None,
 ) -> ReadOnlyAgentResponse:
+    provider = PROVIDERS[request.provider]
+    if provider.adapter_family is not AdapterFamily.OPENAI_COMPATIBLE:
+        raise ValueError("read-only agent currently supports only OpenAI-compatible providers")
+
     tools = _agent_tool_definitions()
     allowed_names = set(READ_ONLY_AGENT_TOOL_NAMES)
     messages: list[ChatMessage] = [
@@ -136,7 +144,7 @@ def run_read_only_agent(
             )
 
         if tool_rounds >= request.max_tool_rounds:
-            raise LLMProviderError("read-only agent exceeded max tool rounds")
+            raise ValueError("read-only agent exceeded max tool rounds")
         tool_rounds += 1
 
         for call in response.tool_calls:
