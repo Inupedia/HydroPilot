@@ -3,9 +3,15 @@ from __future__ import annotations
 from collections import defaultdict
 
 from pydantic import BaseModel, Field, model_validator
-from hydropilot_core.reservoir import ReservoirState, ReservoirStep, step_reservoir
+from hydropilot_core.reservoir import (
+    ReservoirState,
+    ReservoirStep,
+    StorageLevelCurve,
+    StorageLevelPoint,
+    step_reservoir,
+)
 from hydropilot_core.routing import MuskingumParameters, route_muskingum
-from hydropilot_api.domain import HydroRelation, HydroState, RelationType
+from hydropilot_api.domain import CurveType, HydroRelation, HydroState, RelationType
 from hydropilot_api.repositories.protocols import HydroRepository
 
 
@@ -114,6 +120,25 @@ def _routing_chain_ids(start_id: str, relations: list[HydroRelation], *, max_hop
     return chain
 
 
+def _storage_level_curve(repo: HydroRepository, reservoir_id: str) -> StorageLevelCurve | None:
+    curves = repo.list_curves(object_id=reservoir_id, curve_type=CurveType.LEVEL_STORAGE)
+    if len(curves) > 1:
+        raise ValueError(f"reservoir {reservoir_id} must have at most one level-storage curve")
+    if not curves:
+        return None
+
+    curve = curves[0]
+    if curve.x_unit != "m" or curve.y_unit != "m3":
+        raise ValueError("level-storage curve requires x_unit=m and y_unit=m3")
+
+    return StorageLevelCurve(
+        points=[
+            StorageLevelPoint(storage_m3=point.y, level_m=point.x)
+            for point in curve.points
+        ]
+    )
+
+
 def _routing_parameters(repo: HydroRepository, object_id: str, *, dt_seconds: float) -> MuskingumParameters:
     reach = repo.get_object(object_id)
     if reach is None:
@@ -140,11 +165,16 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
         raise KeyError(request.reservoir_id)
     storage = float(reservoir.properties.get("initial_storage_m3", 0))
     max_storage = float(reservoir.properties.get("max_storage_m3", max(storage, 1)))
-    level = reservoir.properties.get("initial_level_m")
+    storage_level_curve = _storage_level_curve(repo, request.reservoir_id)
+    if storage_level_curve is not None:
+        level = storage_level_curve.level_for_storage(storage)
+    else:
+        initial_level = reservoir.properties.get("initial_level_m")
+        level = float(initial_level) if initial_level is not None else None
     state = ReservoirState(
         storage_m3=storage,
         max_storage_m3=max_storage,
-        level_m=float(level) if level is not None else None,
+        level_m=level,
     )
     relations = repo.list_relations()
     release_reach_id = _release_reach_id(request.reservoir_id, relations)
@@ -166,6 +196,7 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
                     outflow_cms=interval_release,
                     dt_seconds=dt_seconds,
                 ),
+                storage_level_curve=storage_level_curve,
             )
         states.append(
             HydroState(
