@@ -77,14 +77,34 @@ class ToolRepository:
         ]
         self.constraints = [
             HydroConstraint(
-                id="constraint-level",
+                id="constraint-level-range",
                 object_id="reservoir-alpha",
                 variable="level",
-                constraint_type=ConstraintType.MAXIMUM,
+                constraint_type=ConstraintType.RANGE,
                 unit="m",
+                min_value=95,
                 max_value=108,
-                source="test",
-            )
+                active_when={"season": "flood"},
+                source="test-rulebook-range",
+            ),
+            HydroConstraint(
+                id="constraint-max-release",
+                object_id="reservoir-alpha",
+                variable="release",
+                constraint_type=ConstraintType.MAXIMUM,
+                unit="m3/s",
+                max_value=80,
+                source="test-rulebook-release",
+            ),
+            HydroConstraint(
+                id="constraint-min-level",
+                object_id="reservoir-alpha",
+                variable="level",
+                constraint_type=ConstraintType.MINIMUM,
+                unit="m",
+                min_value=96,
+                source="test-rulebook-min",
+            ),
         ]
 
     def list_objects(self, object_type: ObjectType | None = None):
@@ -113,7 +133,7 @@ class ToolRepository:
             values = [item for item in values if item.object_id == object_id]
         if variable is not None:
             values = [item for item in values if item.variable == variable]
-        return values
+        return sorted(values, key=lambda item: item.id)
 
 
 def test_catalog_contains_only_read_only_tools_with_json_schemas():
@@ -292,17 +312,82 @@ def test_list_curves_tool_paginates_and_bounds_limit():
         )
 
 
-def test_constraint_tool_preserves_typed_filter():
-    constraints = execute_tool(
-        ToolRepository(),
+def test_list_constraints_tool_returns_paged_full_semantics_with_variable_filter():
+    repo = ToolRepository()
+
+    all_constraints = execute_tool(
+        repo,
+        HydroToolRequest(name="list_constraints", arguments={"object_id": "reservoir-alpha"}),
+    )
+    levels = execute_tool(
+        repo,
         HydroToolRequest(
             name="list_constraints",
             arguments={"object_id": "reservoir-alpha", "variable": "level"},
         ),
     )
 
-    assert [item["id"] for item in constraints.result] == ["constraint-level"]
-    assert constraints.result[0]["constraint_type"] == "maximum"
+    assert all_constraints.result["offset"] == 0
+    assert all_constraints.result["limit"] == 50
+    assert all_constraints.result["total"] == 3
+    assert [item["id"] for item in all_constraints.result["items"]] == [
+        "constraint-level-range",
+        "constraint-max-release",
+        "constraint-min-level",
+    ]
+
+    range_constraint = all_constraints.result["items"][0]
+    assert range_constraint == {
+        "id": "constraint-level-range",
+        "object_id": "reservoir-alpha",
+        "variable": "level",
+        "constraint_type": "range",
+        "unit": "m",
+        "min_value": 95.0,
+        "max_value": 108.0,
+        "active_when": {"season": "flood"},
+        "source": "test-rulebook-range",
+    }
+
+    assert levels.result["total"] == 2
+    assert [item["id"] for item in levels.result["items"]] == [
+        "constraint-level-range",
+        "constraint-min-level",
+    ]
+
+
+def test_list_constraints_tool_paginates_and_bounds_limit():
+    repo = ToolRepository()
+
+    page = execute_tool(
+        repo,
+        HydroToolRequest(
+            name="list_constraints",
+            arguments={"object_id": "reservoir-alpha", "offset": 1, "limit": 1},
+        ),
+    )
+    beyond = execute_tool(
+        repo,
+        HydroToolRequest(
+            name="list_constraints",
+            arguments={"object_id": "reservoir-alpha", "offset": 10, "limit": 2},
+        ),
+    )
+
+    assert page.result["offset"] == 1
+    assert page.result["limit"] == 1
+    assert page.result["total"] == 3
+    assert [item["id"] for item in page.result["items"]] == ["constraint-max-release"]
+    assert beyond.result == {"offset": 10, "limit": 2, "total": 3, "items": []}
+
+    with pytest.raises(ValidationError):
+        execute_tool(
+            repo,
+            HydroToolRequest(
+                name="list_constraints",
+                arguments={"object_id": "reservoir-alpha", "limit": 101},
+            ),
+        )
 
 
 def test_unknown_tool_and_invalid_arguments_fail_explicitly():
