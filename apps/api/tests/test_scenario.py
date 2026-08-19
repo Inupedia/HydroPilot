@@ -36,6 +36,9 @@ class MemoryHydroRepository:
     def list_curves(self, object_id=None, curve_type=None):
         return []
 
+    def list_constraints(self, object_id=None, variable=None):
+        return []
+
 
 def point() -> Geometry:
     return Geometry(type="Point", coordinates=[-122.0, 40.0])
