@@ -16,6 +16,22 @@ class GetObjectArgs(BaseModel):
 
 class ListObjectsArgs(BaseModel):
     object_type: ObjectType | None = None
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=100)
+
+
+class ObjectInventoryItem(BaseModel):
+    id: str
+    name: str
+    object_type: ObjectType
+    source: str
+
+
+class ObjectInventoryPage(BaseModel):
+    offset: int
+    limit: int
+    total: int
+    items: list[ObjectInventoryItem]
 
 
 class TraceDownstreamArgs(BaseModel):
@@ -74,7 +90,22 @@ def _get_object(repo: HydroRepository, args: BaseModel):
 
 def _list_objects(repo: HydroRepository, args: BaseModel):
     values = ListObjectsArgs.model_validate(args)
-    return repo.list_objects(values.object_type)
+    objects = repo.list_objects(values.object_type)
+    selected = objects[values.offset : values.offset + values.limit]
+    return ObjectInventoryPage(
+        offset=values.offset,
+        limit=values.limit,
+        total=len(objects),
+        items=[
+            ObjectInventoryItem(
+                id=item.id,
+                name=item.name,
+                object_type=item.object_type,
+                source=item.source,
+            )
+            for item in selected
+        ],
+    )
 
 
 def _trace_downstream(repo: HydroRepository, args: BaseModel):
@@ -124,7 +155,7 @@ _REGISTRY: dict[str, _ToolRegistration] = {
         handler=_list_curves,
     ),
     "list_objects": _ToolRegistration(
-        description="List water-network objects, optionally filtered by typed object category.",
+        description="List a bounded page of compact water-network object summaries, optionally filtered by typed object category.",
         args_model=ListObjectsArgs,
         handler=_list_objects,
     ),
