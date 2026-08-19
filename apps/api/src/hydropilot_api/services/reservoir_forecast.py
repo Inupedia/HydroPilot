@@ -22,6 +22,7 @@ class ReservoirRainfallForecastRequest(BaseModel):
     reservoir_id: str = "reservoir-shasta"
     rainfall: list[RainfallForecastPoint] = Field(min_length=1)
     dt_minutes: int = Field(default=30, gt=0, le=240)
+    routing_horizon_minutes: int | None = Field(default=None, gt=0, le=1440)
     initial_inflow_cms: float = Field(ge=0)
     release_cms: float = Field(ge=0)
     release_response_fraction: float = Field(default=0, ge=0, le=1)
@@ -34,8 +35,14 @@ class ReservoirRainfallForecastRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_forecast_horizon(self) -> "ReservoirRainfallForecastRequest":
-        if self.rainfall[-1].timestamp_minutes > 1440:
+        rainfall_horizon = self.rainfall[-1].timestamp_minutes
+        if rainfall_horizon > 1440:
             raise ValueError("reservoir rainfall forecast horizon cannot exceed 1440 minutes")
+        if self.routing_horizon_minutes is not None:
+            if self.routing_horizon_minutes < rainfall_horizon:
+                raise ValueError("routing_horizon_minutes cannot end before rainfall")
+            if self.routing_horizon_minutes % self.dt_minutes != 0:
+                raise ValueError("routing_horizon_minutes must be divisible by dt_minutes")
         if self.max_release_cms is not None and self.max_release_cms < self.release_cms:
             raise ValueError("max_release_cms cannot be lower than release_cms")
         return self
@@ -68,6 +75,23 @@ class _ReservoirForecastScenarioRequest(ReleaseScenarioRequest):
     """Internal scenario contract that allows a forecast to cover a longer routing chain."""
 
     max_hops: int = Field(default=20, ge=1, le=25)
+
+
+def _rainfall_with_routing_tail(request: ReservoirRainfallForecastRequest) -> list[RainfallForecastPoint]:
+    rainfall = list(request.rainfall)
+    target_horizon = request.routing_horizon_minutes or rainfall[-1].timestamp_minutes
+    for timestamp in range(
+        rainfall[-1].timestamp_minutes + request.dt_minutes,
+        target_horizon + request.dt_minutes,
+        request.dt_minutes,
+    ):
+        rainfall.append(
+            RainfallForecastPoint(
+                timestamp_minutes=timestamp,
+                precipitation_mm=0,
+            )
+        )
+    return rainfall
 
 
 def _forecast_release_hydrograph(
@@ -137,7 +161,7 @@ def run_reservoir_rainfall_forecast(
     runoff = run_runoff_forecast(
         RunoffForecastRequest(
             object_id=request.reservoir_id,
-            rainfall=request.rainfall,
+            rainfall=_rainfall_with_routing_tail(request),
             dt_minutes=request.dt_minutes,
             initial_flow_cms=request.initial_inflow_cms,
             catchment_area_km2=request.catchment_area_km2,
