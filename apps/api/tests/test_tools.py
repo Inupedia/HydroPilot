@@ -36,6 +36,8 @@ class ToolRepository:
                 name="Reservoir Alpha",
                 object_type=ObjectType.RESERVOIR,
                 geometry=Geometry(type="Point", coordinates=[0.0, 0.0]),
+                properties={"initial_storage_m3": 1_000_000},
+                source="test-repository",
             ),
         }
         self.relations = [
@@ -116,7 +118,7 @@ def test_catalog_contains_only_read_only_tools_with_json_schemas():
     assert all("properties" in item.input_schema for item in catalog)
 
 
-def test_get_object_tool_returns_json_serializable_domain_data():
+def test_get_object_tool_still_returns_full_domain_data():
     result = execute_tool(
         ToolRepository(),
         HydroToolRequest(name="get_object", arguments={"object_id": "reservoir-alpha"}),
@@ -125,9 +127,12 @@ def test_get_object_tool_returns_json_serializable_domain_data():
     assert result.name == "get_object"
     assert result.result["id"] == "reservoir-alpha"
     assert result.result["object_type"] == "reservoir"
+    assert result.result["geometry"] == {"type": "Point", "coordinates": [0.0, 0.0]}
+    assert result.result["properties"] == {"initial_storage_m3": 1_000_000}
+    assert result.result["source"] == "test-repository"
 
 
-def test_list_objects_tool_supports_all_objects_and_typed_filter():
+def test_list_objects_tool_returns_compact_paged_inventory_with_typed_filter():
     repo = ToolRepository()
 
     all_objects = execute_tool(repo, HydroToolRequest(name="list_objects", arguments={}))
@@ -136,9 +141,50 @@ def test_list_objects_tool_supports_all_objects_and_typed_filter():
         HydroToolRequest(name="list_objects", arguments={"object_type": "river_reach"}),
     )
 
-    assert [item["id"] for item in all_objects.result] == ["reach-a", "reach-b", "reservoir-alpha"]
-    assert [item["id"] for item in reaches.result] == ["reach-a", "reach-b"]
-    assert all(item["object_type"] == "river_reach" for item in reaches.result)
+    assert all_objects.result["offset"] == 0
+    assert all_objects.result["limit"] == 50
+    assert all_objects.result["total"] == 3
+    assert [item["id"] for item in all_objects.result["items"]] == ["reach-a", "reach-b", "reservoir-alpha"]
+    assert all(set(item) == {"id", "name", "object_type", "source"} for item in all_objects.result["items"])
+    assert all("geometry" not in item and "properties" not in item for item in all_objects.result["items"])
+
+    assert reaches.result["total"] == 2
+    assert [item["id"] for item in reaches.result["items"]] == ["reach-a", "reach-b"]
+    assert all(item["object_type"] == "river_reach" for item in reaches.result["items"])
+
+
+def test_list_objects_tool_paginates_deterministically_and_bounds_limit():
+    repo = ToolRepository()
+
+    page = execute_tool(
+        repo,
+        HydroToolRequest(name="list_objects", arguments={"offset": 1, "limit": 1}),
+    )
+    beyond = execute_tool(
+        repo,
+        HydroToolRequest(name="list_objects", arguments={"offset": 10, "limit": 2}),
+    )
+
+    assert page.result == {
+        "offset": 1,
+        "limit": 1,
+        "total": 3,
+        "items": [
+            {
+                "id": "reach-b",
+                "name": "Reach B",
+                "object_type": "river_reach",
+                "source": "fixture",
+            }
+        ],
+    }
+    assert beyond.result == {"offset": 10, "limit": 2, "total": 3, "items": []}
+
+    with pytest.raises(ValidationError):
+        execute_tool(
+            repo,
+            HydroToolRequest(name="list_objects", arguments={"limit": 101}),
+        )
 
     with pytest.raises(ValidationError):
         execute_tool(
