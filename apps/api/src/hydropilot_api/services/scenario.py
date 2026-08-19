@@ -22,7 +22,10 @@ class ReleaseScenarioRequest(BaseModel):
     inflow_hydrograph: list[HydrographPoint] = Field(min_length=2)
 
     @model_validator(mode="after")
-    def inflow_boundary_covers_scenario(self) -> "ReleaseScenarioRequest":
+    def validate_time_grid_and_inflow_boundary(self) -> "ReleaseScenarioRequest":
+        if self.duration_minutes % self.dt_minutes != 0:
+            raise ValueError("duration_minutes must be divisible by dt_minutes")
+
         points = self.inflow_hydrograph
         if points[0].timestamp_minutes != 0:
             raise ValueError("inflow hydrograph must start at minute 0")
@@ -101,23 +104,19 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
     release_reach_id = _release_reach_id(request.reservoir_id, relations)
     downstream = downstream_path(release_reach_id, relations, max_hops=request.max_hops)
     timestamps = list(range(0, request.duration_minutes + request.dt_minutes, request.dt_minutes))
-    if timestamps[-1] > request.duration_minutes:
-        timestamps[-1] = request.duration_minutes
-    timestamps = list(dict.fromkeys(timestamps))
-    dt_seconds_default = request.dt_minutes * 60
+    dt_seconds = request.dt_minutes * 60
     sampled_inflow = [_sample_hydrograph(request.inflow_hydrograph, timestamp) for timestamp in timestamps]
     states: list[HydroState] = []
 
     for idx, timestamp in enumerate(timestamps):
         if idx > 0:
-            interval_seconds = (timestamp - timestamps[idx - 1]) * 60
             interval_inflow = (sampled_inflow[idx - 1] + sampled_inflow[idx]) / 2.0
             state = step_reservoir(
                 state,
                 ReservoirStep(
                     inflow_cms=interval_inflow,
                     outflow_cms=request.release_cms,
-                    dt_seconds=interval_seconds,
+                    dt_seconds=dt_seconds,
                 ),
             )
         states.append(
@@ -158,7 +157,7 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
     initial_flow = request.release_cms * 0.35
 
     for item in downstream:
-        params = _routing_parameters(repo, item.object_id, dt_seconds=dt_seconds_default)
+        params = _routing_parameters(repo, item.object_id, dt_seconds=dt_seconds)
         routed_series = route_muskingum(
             routed_series,
             params,
