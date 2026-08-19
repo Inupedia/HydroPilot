@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from pydantic import BaseModel, Field
+
+from hydropilot_api.domain import CurveType
+from hydropilot_api.repositories.protocols import HydroRepository
+from hydropilot_api.topology import downstream_path
+
+
+class GetObjectArgs(BaseModel):
+    object_id: str = Field(min_length=1)
+
+
+class TraceDownstreamArgs(BaseModel):
+    object_id: str = Field(min_length=1)
+    max_hops: int = Field(default=8, ge=0, le=25)
+
+
+class ListCurvesArgs(BaseModel):
+    object_id: str = Field(min_length=1)
+    curve_type: CurveType | None = None
+
+
+class ListConstraintsArgs(BaseModel):
+    object_id: str = Field(min_length=1)
+    variable: str | None = None
+
+
+class HydroToolDefinition(BaseModel):
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    read_only: bool = True
+
+
+class HydroToolRequest(BaseModel):
+    name: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class HydroToolResponse(BaseModel):
+    name: str
+    result: Any
+
+
+ToolHandler = Callable[[HydroRepository, BaseModel], Any]
+
+
+@dataclass(frozen=True)
+class _ToolRegistration:
+    description: str
+    args_model: type[BaseModel]
+    handler: ToolHandler
+
+
+def _require_object(repo: HydroRepository, object_id: str):
+    obj = repo.get_object(object_id)
+    if obj is None:
+        raise KeyError(object_id)
+    return obj
+
+
+def _get_object(repo: HydroRepository, args: BaseModel):
+    values = GetObjectArgs.model_validate(args)
+    return _require_object(repo, values.object_id)
+
+
+def _trace_downstream(repo: HydroRepository, args: BaseModel):
+    values = TraceDownstreamArgs.model_validate(args)
+    _require_object(repo, values.object_id)
+    return downstream_path(values.object_id, repo.list_relations(), max_hops=values.max_hops)
+
+
+def _list_curves(repo: HydroRepository, args: BaseModel):
+    values = ListCurvesArgs.model_validate(args)
+    _require_object(repo, values.object_id)
+    return repo.list_curves(object_id=values.object_id, curve_type=values.curve_type)
+
+
+def _list_constraints(repo: HydroRepository, args: BaseModel):
+    values = ListConstraintsArgs.model_validate(args)
+    _require_object(repo, values.object_id)
+    return repo.list_constraints(object_id=values.object_id, variable=values.variable)
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, tuple):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _jsonable(item) for key, item in value.items()}
+    return value
+
+
+_REGISTRY: dict[str, _ToolRegistration] = {
+    "get_object": _ToolRegistration(
+        description="Get one water-network object by its stable object id.",
+        args_model=GetObjectArgs,
+        handler=_get_object,
+    ),
+    "list_constraints": _ToolRegistration(
+        description="List configured operating constraints for one water-network object.",
+        args_model=ListConstraintsArgs,
+        handler=_list_constraints,
+    ),
+    "list_curves": _ToolRegistration(
+        description="List engineering curves for one water-network object.",
+        args_model=ListCurvesArgs,
+        handler=_list_curves,
+    ),
+    "trace_downstream": _ToolRegistration(
+        description="Trace downstream FLOWS_TO relationships from one water-network object.",
+        args_model=TraceDownstreamArgs,
+        handler=_trace_downstream,
+    ),
+}
+
+
+def tool_catalog() -> list[HydroToolDefinition]:
+    return [
+        HydroToolDefinition(
+            name=name,
+            description=registration.description,
+            input_schema=registration.args_model.model_json_schema(),
+            read_only=True,
+        )
+        for name, registration in sorted(_REGISTRY.items())
+    ]
+
+
+def execute_tool(repo: HydroRepository, request: HydroToolRequest) -> HydroToolResponse:
+    registration = _REGISTRY.get(request.name)
+    if registration is None:
+        raise ValueError(f"unknown hydro tool: {request.name}")
+
+    args = registration.args_model.model_validate(request.arguments)
+    result = registration.handler(repo, args)
+    return HydroToolResponse(name=request.name, result=_jsonable(result))

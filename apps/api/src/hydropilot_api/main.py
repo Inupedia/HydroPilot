@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
+
 from hydropilot_api.config import get_settings
 from hydropilot_api.domain import (
     CurveType,
@@ -12,6 +14,13 @@ from hydropilot_api.domain import (
 from hydropilot_api.llm import ChatRequest, ChatResponse, LLMProviderError, ProviderSummary, chat_completion, provider_catalog
 from hydropilot_api.repositories.fixture import get_fixture_repository
 from hydropilot_api.services.scenario import ReleaseScenarioRequest, ReleaseScenarioResponse, run_release_scenario
+from hydropilot_api.tools import (
+    HydroToolDefinition,
+    HydroToolRequest,
+    HydroToolResponse,
+    execute_tool,
+    tool_catalog,
+)
 from hydropilot_api.topology import downstream_path
 
 settings = get_settings()
@@ -79,6 +88,21 @@ def get_downstream(object_id: str, max_hops: int = Query(default=8, ge=0, le=25)
     if repo().get_object(object_id) is None:
         raise HTTPException(status_code=404, detail="object not found")
     return downstream_path(object_id, repo().list_relations(), max_hops=max_hops)
+
+
+@app.get("/api/tools", response_model=list[HydroToolDefinition])
+def list_hydro_tools() -> list[HydroToolDefinition]:
+    return tool_catalog()
+
+
+@app.post("/api/tools/execute", response_model=HydroToolResponse)
+def execute_hydro_tool(request: HydroToolRequest) -> HydroToolResponse:
+    try:
+        return execute_tool(repo(), request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"object not found: {exc.args[0]}") from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/scenarios/release", response_model=ReleaseScenarioResponse)
