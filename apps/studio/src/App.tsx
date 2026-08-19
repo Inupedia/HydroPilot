@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Entity, Viewer } from 'cesium'
 import Timeline from './components/Timeline'
-import { hydroApi, waitForApi, type LlmProviderSummary } from './api/client'
+import { hydroApi, waitForApi, type LlmProviderSummary, type ReleaseScenarioResponse } from './api/client'
 import { createHydroViewer, renderHydroScene } from './cesium/hydroViewer'
 import {
   agentCompatibleProviders,
@@ -10,6 +10,12 @@ import {
   type StudioCopilotMessage,
 } from './copilot/agent'
 import './copilot/grounding.css'
+import {
+  constraintResultSummary,
+  formatConstraintViolation,
+  formatUnevaluatedConstraint,
+} from './scenario/results'
+import './scenario/results.css'
 import { secrets } from './platform/secrets'
 import type { HydroObject, HydroState } from './types'
 
@@ -27,6 +33,7 @@ export default function App() {
   const [objects, setObjects] = useState<HydroObject[]>([])
   const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
   const [states, setStates] = useState<HydroState[]>([])
+  const [scenarioResult, setScenarioResult] = useState<ReleaseScenarioResponse | null>(null)
   const [timestamp, setTimestamp] = useState(0)
   const [releaseCms, setReleaseCms] = useState(2200)
   const [inflowCms, setInflowCms] = useState(1000)
@@ -54,6 +61,7 @@ export default function App() {
     return visible.length ? Math.max(...visible.map((item) => item.value)) : null
   }, [states, timestamp])
   const storageState = states.find((item) => item.timestamp_minutes === timestamp && item.variable === 'storage')
+  const constraintSummary = scenarioResult ? constraintResultSummary(scenarioResult) : null
   const agentProviders = useMemo(() => agentCompatibleProviders(providers), [providers])
   const activeProvider = agentProviders.find((item) => item.id === selectedProvider)
   const providerNeedsKey = activeProvider?.auth_required ?? true
@@ -138,11 +146,12 @@ export default function App() {
     ]
     setBusyAction('scenario'); status(`Running 0D + 1D scenario: inflow ${inflowCms.toLocaleString()} m³/s, release ${flow.toLocaleString()} m³/s…`, 'working')
     try {
-      const next = await hydroApi.releaseScenario(inflowHydrograph, releaseHydrograph)
-      setStates(next)
-      const nextTimes = [...new Set(next.map((item) => item.timestamp_minutes))].sort((a, b) => a - b)
+      const result = await hydroApi.releaseScenario(inflowHydrograph, releaseHydrograph)
+      setScenarioResult(result)
+      setStates(result.states)
+      const nextTimes = [...new Set(result.states.map((item) => item.timestamp_minutes))].sort((a, b) => a - b)
       setTimestamp(nextTimes[0] ?? 0)
-      status(`Scenario ready: ${nextTimes.length} time steps with explicit inflow and release schedules.`, 'success')
+      status(`Scenario ready: ${nextTimes.length} time steps · ${result.violations.length} constraint violations · ${result.unevaluated_constraints.length} unevaluated.`, 'success')
       return nextTimes.length
     } catch (error) { status(`Scenario failed: ${error instanceof Error ? error.message : String(error)}`, 'error'); throw error }
     finally { setBusyAction('') }
@@ -234,6 +243,12 @@ export default function App() {
         <div className={`action-feedback ${actionTone}`} data-testid="action-feedback"><span className="feedback-dot"/><p>{actionStatus}</p></div>
         <section className="panel-section"><h2>1 · Network topology</h2><button data-testid="highlight-downstream" className="action primary" disabled={busyAction === 'highlight'} onClick={() => void highlightDownstream()}>{busyAction === 'highlight' ? 'Tracing network…' : 'Highlight downstream chain'}</button><p className="helper">Expected result: the chain turns yellow and the camera flies to it.</p></section>
         <section className="panel-section"><h2>2 · Release scenario</h2><label className="field-label" htmlFor="inflow">Reservoir inflow boundary</label><div className="release-field"><input id="inflow" value={inflowCms} onChange={(event) => setInflowCms(Number(event.target.value))} type="number" min="0" step="100"/><span>m³/s</span></div><label className="field-label" htmlFor="release">Reservoir release</label><div className="release-field"><input id="release" value={releaseCms} onChange={(event) => setReleaseCms(Number(event.target.value))} type="number" min="1" step="100"/><span>m³/s</span></div><button data-testid="run-scenario" className="action warning" disabled={busyAction === 'scenario'} onClick={() => void runScenario()}>{busyAction === 'scenario' ? 'Running scenario…' : 'Run 0D + 1D scenario'}</button><p className="helper">The visible inflow and release values are converted into explicit 180-minute constant hydrographs before simulation.</p></section>
+        {scenarioResult && constraintSummary && <section className={`scenario-constraints ${constraintSummary.tone}`} data-testid="scenario-constraint-results">
+          <div className="scenario-constraints-header"><span>Constraint check</span><strong>{constraintSummary.counts}</strong></div>
+          <p>{constraintSummary.message}</p>
+          {scenarioResult.violations.length > 0 && <div className="scenario-constraint-group"><span>Detected violations</span>{scenarioResult.violations.slice(0, 5).map((violation) => <code key={`${violation.constraint_id}-${violation.timestamp_minutes}`}>{formatConstraintViolation(violation)}</code>)}{scenarioResult.violations.length > 5 && <small>+{scenarioResult.violations.length - 5} more violations</small>}</div>}
+          {scenarioResult.unevaluated_constraints.length > 0 && <div className="scenario-constraint-group"><span>Unevaluated</span>{scenarioResult.unevaluated_constraints.slice(0, 5).map((item) => <code key={item.constraint_id}>{formatUnevaluatedConstraint(item)}</code>)}{scenarioResult.unevaluated_constraints.length > 5 && <small>+{scenarioResult.unevaluated_constraints.length - 5} more unevaluated constraints</small>}</div>}
+        </section>}
         <div className="status-card" data-testid="scenario-status"><span>Reservoir storage</span><strong>{storageState ? `${(storageState.value / 1e9).toFixed(2)} B m³` : 'Run scenario'}</strong></div>
         <div className="legend"><span><i className="legend-line river"/>River</span><span><i className="legend-dot reservoir"/>Reservoir</span><span><i className="legend-dot dam"/>Dam</span><span><i className="legend-dot gauge"/>Gauge</span><span><i className="legend-dot control"/>Control point</span></div>
       </aside>
