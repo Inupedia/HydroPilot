@@ -49,12 +49,28 @@ class Geometry(BaseModel):
     coordinates: Any
 
 
+class PropertyValueOrigin(StrEnum):
+    SOURCE_DATA = "source_data"
+    DERIVED = "derived"
+    MODEL_ASSUMPTION = "model_assumption"
+    OBSERVED = "observed"
+    CALIBRATED = "calibrated"
+    MANUAL = "manual"
+
+
+class PropertyProvenance(BaseModel):
+    origin: PropertyValueOrigin
+    source: str
+    note: str | None = None
+
+
 class HydroObject(BaseModel):
     id: str
     name: str
     object_type: ObjectType
     geometry: Geometry
     properties: dict[str, Any] = Field(default_factory=dict)
+    property_provenance: dict[str, PropertyProvenance] = Field(default_factory=dict)
     source: str = "fixture"
 
 
