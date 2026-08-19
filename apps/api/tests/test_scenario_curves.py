@@ -48,6 +48,9 @@ class MemoryHydroRepository:
             values = [curve for curve in values if curve.curve_type is curve_type]
         return sorted(values, key=lambda curve: curve.id)
 
+    def list_constraints(self, object_id=None, variable=None):
+        return []
+
 
 def reservoir() -> HydroObject:
     return HydroObject(
