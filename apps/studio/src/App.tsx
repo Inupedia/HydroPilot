@@ -191,7 +191,7 @@ export default function App() {
             <label>Model<input value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} placeholder="Model ID"/></label>
             {selectedProvider === 'custom-openai' && <label>Base URL<input value={customBaseUrl} onChange={(event) => setCustomBaseUrl(event.target.value)} placeholder="https://example.com/v1"/></label>}
             {providerNeedsKey && <label>API key<input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" placeholder="Stored in the OS credential store"/></label>}
-            <div className="secret-row"><span>{providerNeedsKey ? secretState : 'No saved key'}</span>{providerNeedsKey && <button type="button" onClick={() => void saveApiKey()}>Save key</button>}</div>
+            <div className="secret-row"><span>{providerNeedsKey ? secretState : 'No API key required'}</span>{providerNeedsKey && <button type="button" onClick={() => void saveApiKey()}>Save key</button>}</div>
             <p className="helper">Map commands work locally. General questions use the selected LLM provider.</p>
           </div>}
         </section>
