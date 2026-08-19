@@ -22,8 +22,11 @@ class ReservoirRainfallForecastRequest(BaseModel):
     reservoir_id: str = "reservoir-shasta"
     rainfall: list[RainfallForecastPoint] = Field(min_length=1)
     dt_minutes: int = Field(default=30, gt=0, le=240)
+    routing_horizon_minutes: int | None = Field(default=None, gt=0, le=1440)
     initial_inflow_cms: float = Field(ge=0)
     release_cms: float = Field(ge=0)
+    release_response_fraction: float = Field(default=0, ge=0, le=1)
+    max_release_cms: float | None = Field(default=None, ge=0)
     catchment_area_km2: float = Field(gt=0)
     runoff_coefficient: float = Field(default=0.18, ge=0, le=1)
     response_time_hours: float = Field(default=8.0, gt=0, le=240)
@@ -32,8 +35,16 @@ class ReservoirRainfallForecastRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_forecast_horizon(self) -> "ReservoirRainfallForecastRequest":
-        if self.rainfall[-1].timestamp_minutes > 1440:
+        rainfall_horizon = self.rainfall[-1].timestamp_minutes
+        if rainfall_horizon > 1440:
             raise ValueError("reservoir rainfall forecast horizon cannot exceed 1440 minutes")
+        if self.routing_horizon_minutes is not None:
+            if self.routing_horizon_minutes < rainfall_horizon:
+                raise ValueError("routing_horizon_minutes cannot end before rainfall")
+            if self.routing_horizon_minutes % self.dt_minutes != 0:
+                raise ValueError("routing_horizon_minutes must be divisible by dt_minutes")
+        if self.max_release_cms is not None and self.max_release_cms < self.release_cms:
+            raise ValueError("max_release_cms cannot be lower than release_cms")
         return self
 
 
@@ -47,6 +58,8 @@ class ReservoirForecastSummary(BaseModel):
     peak_inflow_cms: float = Field(ge=0)
     peak_inflow_timestamp_minutes: int = Field(gt=0)
     release_cms: float = Field(ge=0)
+    peak_release_cms: float = Field(ge=0)
+    release_response_fraction: float = Field(ge=0, le=1)
     final_level_m: float | None = None
 
 
@@ -62,6 +75,42 @@ class _ReservoirForecastScenarioRequest(ReleaseScenarioRequest):
     """Internal scenario contract that allows a forecast to cover a longer routing chain."""
 
     max_hops: int = Field(default=20, ge=1, le=25)
+
+
+def _rainfall_with_routing_tail(request: ReservoirRainfallForecastRequest) -> list[RainfallForecastPoint]:
+    rainfall = list(request.rainfall)
+    target_horizon = request.routing_horizon_minutes or rainfall[-1].timestamp_minutes
+    for timestamp in range(
+        rainfall[-1].timestamp_minutes + request.dt_minutes,
+        target_horizon + request.dt_minutes,
+        request.dt_minutes,
+    ):
+        rainfall.append(
+            RainfallForecastPoint(
+                timestamp_minutes=timestamp,
+                precipitation_mm=0,
+            )
+        )
+    return rainfall
+
+
+def _forecast_release_hydrograph(
+    request: ReservoirRainfallForecastRequest,
+    runoff: RunoffForecastResponse,
+) -> list[HydrographPoint]:
+    points = [HydrographPoint(timestamp_minutes=0, flow_cms=request.release_cms)]
+    for runoff_point in runoff.runoff:
+        excess_inflow = max(0.0, runoff_point.flow_cms - request.initial_inflow_cms)
+        release = request.release_cms + request.release_response_fraction * excess_inflow
+        if request.max_release_cms is not None:
+            release = min(release, request.max_release_cms)
+        points.append(
+            HydrographPoint(
+                timestamp_minutes=runoff_point.timestamp_minutes,
+                flow_cms=release,
+            )
+        )
+    return points
 
 
 def _project_control_point_flow_states(
@@ -112,7 +161,7 @@ def run_reservoir_rainfall_forecast(
     runoff = run_runoff_forecast(
         RunoffForecastRequest(
             object_id=request.reservoir_id,
-            rainfall=request.rainfall,
+            rainfall=_rainfall_with_routing_tail(request),
             dt_minutes=request.dt_minutes,
             initial_flow_cms=request.initial_inflow_cms,
             catchment_area_km2=request.catchment_area_km2,
@@ -130,10 +179,7 @@ def run_reservoir_rainfall_forecast(
             for point in runoff.runoff
         ],
     ]
-    release_hydrograph = [
-        HydrographPoint(timestamp_minutes=0, flow_cms=request.release_cms),
-        HydrographPoint(timestamp_minutes=duration_minutes, flow_cms=request.release_cms),
-    ]
+    release_hydrograph = _forecast_release_hydrograph(request, runoff)
     scenario = run_release_scenario(
         repo,
         _ReservoirForecastScenarioRequest(
@@ -157,6 +203,17 @@ def run_reservoir_rainfall_forecast(
     )
     if not storage_states:
         raise ValueError("reservoir forecast scenario did not produce storage states")
+
+    release_states = sorted(
+        [
+            state
+            for state in scenario.states
+            if state.object_id == request.reservoir_id and state.variable == "release"
+        ],
+        key=lambda state: state.timestamp_minutes,
+    )
+    if not release_states:
+        raise ValueError("reservoir forecast scenario did not produce release states")
 
     current_storage = storage_states[0].value
     final_storage = storage_states[-1].value
@@ -190,6 +247,8 @@ def run_reservoir_rainfall_forecast(
             peak_inflow_cms=runoff.summary.peak_flow_cms,
             peak_inflow_timestamp_minutes=runoff.summary.peak_timestamp_minutes,
             release_cms=request.release_cms,
+            peak_release_cms=max(state.value for state in release_states),
+            release_response_fraction=request.release_response_fraction,
             final_level_m=final_level,
         ),
     )

@@ -133,8 +133,11 @@ export interface ReservoirRainfallForecastRequest {
   reservoir_id: string
   rainfall: RainfallForecastPoint[]
   dt_minutes?: number
+  routing_horizon_minutes?: number
   initial_inflow_cms: number
   release_cms: number
+  release_response_fraction?: number
+  max_release_cms?: number
   catchment_area_km2: number
   runoff_coefficient?: number
   response_time_hours?: number
@@ -151,6 +154,8 @@ export interface ReservoirForecastSummary {
   peak_inflow_cms: number
   peak_inflow_timestamp_minutes: number
   release_cms: number
+  peak_release_cms: number
+  release_response_fraction: number
   final_level_m: number | null
 }
 export interface ReservoirRainfallForecastResponse {
