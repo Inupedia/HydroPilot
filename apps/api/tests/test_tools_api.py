@@ -14,6 +14,7 @@ def test_tools_catalog_exposes_only_read_only_hydro_tools():
         "get_object",
         "list_constraints",
         "list_curves",
+        "list_objects",
         "trace_downstream",
     ]
     assert all(item["read_only"] is True for item in body)
@@ -28,6 +29,16 @@ def test_tool_execution_reads_real_demo_object():
 
     assert response.status_code == 200
     assert response.json()["result"]["id"] == "reservoir-shasta"
+
+
+def test_tool_execution_lists_real_demo_reservoir_objects():
+    response = client.post(
+        "/api/tools/execute",
+        json={"name": "list_objects", "arguments": {"object_type": "reservoir"}},
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["result"]] == ["reservoir-shasta"]
 
 
 def test_tool_execution_can_read_honest_empty_demo_curves_and_constraints():
