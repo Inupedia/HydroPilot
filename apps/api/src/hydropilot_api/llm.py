@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from enum import StrEnum
@@ -46,6 +47,30 @@ class ChatResponse(BaseModel):
     provider: ProviderId
     model: str
     text: str
+    usage: dict[str, Any] | None = None
+
+
+class FunctionToolDefinition(BaseModel):
+    name: str = Field(min_length=1)
+    description: str
+    parameters: dict[str, Any]
+
+
+class ToolChatRequest(ChatRequest):
+    tools: list[FunctionToolDefinition] = Field(min_length=1)
+
+
+class ToolCall(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    arguments: dict[str, Any]
+
+
+class ToolChatResponse(BaseModel):
+    provider: ProviderId
+    model: str
+    text: str | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
     usage: dict[str, Any] | None = None
 
 
@@ -185,6 +210,23 @@ def _openai_payload(request: ChatRequest) -> dict[str, Any]:
     return payload
 
 
+def _openai_tool_payload(request: ToolChatRequest) -> dict[str, Any]:
+    payload = _openai_payload(request)
+    payload["tools"] = [
+        {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            },
+        }
+        for tool in request.tools
+    ]
+    payload["tool_choice"] = "auto"
+    return payload
+
+
 def _anthropic_payload(request: ChatRequest) -> dict[str, Any]:
     system_parts = [m.content for m in request.messages if m.role == "system"]
     messages = [
@@ -248,6 +290,54 @@ def _extract_openai(data: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMProviderError("OpenAI-compatible provider returned an unexpected response") from exc
     return str(text), data.get("usage")
+
+
+def _extract_openai_tool_round(data: dict[str, Any]) -> tuple[str | None, list[ToolCall], dict[str, Any] | None]:
+    try:
+        message = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise LLMProviderError("OpenAI-compatible provider returned an unexpected tool response") from exc
+    if not isinstance(message, dict):
+        raise LLMProviderError("OpenAI-compatible provider returned an unexpected tool response")
+
+    raw_content = message.get("content")
+    if raw_content is not None and not isinstance(raw_content, str):
+        raise LLMProviderError("OpenAI-compatible provider returned invalid assistant text")
+    text = raw_content if isinstance(raw_content, str) and raw_content.strip() else None
+
+    raw_tool_calls = message.get("tool_calls", []) or []
+    if not isinstance(raw_tool_calls, list):
+        raise LLMProviderError("OpenAI-compatible provider returned invalid tool calls")
+
+    tool_calls: list[ToolCall] = []
+    for item in raw_tool_calls:
+        if not isinstance(item, dict):
+            raise LLMProviderError("OpenAI-compatible provider returned invalid tool call")
+        call_id = item.get("id")
+        if not isinstance(call_id, str) or not call_id.strip():
+            raise LLMProviderError("OpenAI-compatible provider returned tool call without id")
+        if item.get("type") != "function":
+            raise LLMProviderError("OpenAI-compatible provider returned unsupported tool call type")
+        function = item.get("function")
+        if not isinstance(function, dict):
+            raise LLMProviderError("OpenAI-compatible provider returned invalid tool call function")
+        name = function.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise LLMProviderError("OpenAI-compatible provider returned tool call without function name")
+        raw_arguments = function.get("arguments")
+        if not isinstance(raw_arguments, str):
+            raise LLMProviderError("OpenAI-compatible tool call arguments must be a JSON string")
+        try:
+            arguments = json.loads(raw_arguments)
+        except json.JSONDecodeError as exc:
+            raise LLMProviderError("OpenAI-compatible tool call arguments are not valid JSON") from exc
+        if not isinstance(arguments, dict):
+            raise LLMProviderError("OpenAI-compatible tool call arguments must decode to a JSON object")
+        tool_calls.append(ToolCall(id=call_id, name=name, arguments=arguments))
+
+    if text is None and not tool_calls:
+        raise LLMProviderError("OpenAI-compatible provider returned no text or tool calls")
+    return text, tool_calls, data.get("usage")
 
 
 def _extract_anthropic(data: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
@@ -323,3 +413,41 @@ def chat_completion(request: ChatRequest, *, transport: httpx.BaseTransport | No
 
     text, usage = extractor(data)
     return ChatResponse(provider=request.provider, model=request.model, text=text, usage=usage)
+
+
+def tool_chat_round(
+    request: ToolChatRequest,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> ToolChatResponse:
+    provider_definition = PROVIDERS[request.provider]
+    if provider_definition.adapter_family is not AdapterFamily.OPENAI_COMPATIBLE:
+        raise LLMProviderError("tool calling is currently supported only for OpenAI-compatible providers")
+
+    provider, base_url, api_key = _resolve_credentials(request)
+    url = f"{base_url}/chat/completions"
+    headers = {
+        "content-type": "application/json",
+        "authorization": f"Bearer {api_key}",
+    }
+    payload = _openai_tool_payload(request)
+
+    try:
+        with httpx.Client(timeout=60.0, transport=transport) as client:
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+    except httpx.HTTPStatusError as exc:
+        message = exc.response.text[:500]
+        raise LLMProviderError(f"{provider.name} request failed ({exc.response.status_code}): {message}") from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise LLMProviderError(f"{provider.name} request failed: {exc}") from exc
+
+    text, tool_calls, usage = _extract_openai_tool_round(data)
+    return ToolChatResponse(
+        provider=request.provider,
+        model=request.model,
+        text=text,
+        tool_calls=tool_calls,
+        usage=usage,
+    )
