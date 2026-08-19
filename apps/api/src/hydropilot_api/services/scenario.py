@@ -11,7 +11,14 @@ from hydropilot_core.reservoir import (
     step_reservoir,
 )
 from hydropilot_core.routing import MuskingumParameters, route_muskingum
-from hydropilot_api.domain import CurveType, HydroRelation, HydroState, RelationType
+from hydropilot_api.domain import (
+    ConstraintType,
+    CurveType,
+    HydroConstraint,
+    HydroRelation,
+    HydroState,
+    RelationType,
+)
 from hydropilot_api.repositories.protocols import HydroRepository
 
 
@@ -63,9 +70,31 @@ class ReleaseScenarioRequest(BaseModel):
         return self
 
 
+class ConstraintViolation(BaseModel):
+    constraint_id: str
+    object_id: str
+    variable: str
+    timestamp_minutes: int
+    value: float
+    unit: str
+    constraint_type: ConstraintType
+    min_value: float | None = None
+    max_value: float | None = None
+    source: str
+
+
+class UnevaluatedConstraint(BaseModel):
+    constraint_id: str
+    object_id: str
+    variable: str
+    reason: str
+
+
 class ReleaseScenarioResponse(BaseModel):
     scenario_id: str
     states: list[HydroState]
+    violations: list[ConstraintViolation] = Field(default_factory=list)
+    unevaluated_constraints: list[UnevaluatedConstraint] = Field(default_factory=list)
 
 
 def _sample_hydrograph(points: list[HydrographPoint], timestamp_minutes: int) -> float:
@@ -157,6 +186,93 @@ def _routing_parameters(repo: HydroRepository, object_id: str, *, dt_seconds: fl
         )
     except (TypeError, ValueError) as exc:
         raise ValueError(f"routing reach {object_id} has invalid routing_k_minutes or routing_x") from exc
+
+
+def _constraint_is_violated(constraint: HydroConstraint, value: float) -> bool:
+    if constraint.constraint_type is ConstraintType.MINIMUM:
+        return value < float(constraint.min_value)
+    if constraint.constraint_type is ConstraintType.MAXIMUM:
+        return value > float(constraint.max_value)
+    if constraint.constraint_type is ConstraintType.RANGE:
+        return value < float(constraint.min_value) or value > float(constraint.max_value)
+    return False
+
+
+def _evaluate_constraints(
+    repo: HydroRepository,
+    states: list[HydroState],
+) -> tuple[list[ConstraintViolation], list[UnevaluatedConstraint]]:
+    by_object_variable: dict[tuple[str, str], list[HydroState]] = defaultdict(list)
+    for state in states:
+        by_object_variable[(state.object_id, state.variable)].append(state)
+
+    violations: list[ConstraintViolation] = []
+    unevaluated: list[UnevaluatedConstraint] = []
+
+    for object_id in sorted({state.object_id for state in states}):
+        for constraint in repo.list_constraints(object_id=object_id):
+            if constraint.active_when:
+                unevaluated.append(
+                    UnevaluatedConstraint(
+                        constraint_id=constraint.id,
+                        object_id=constraint.object_id,
+                        variable=constraint.variable,
+                        reason="conditional constraints are not evaluated",
+                    )
+                )
+                continue
+
+            if constraint.constraint_type is ConstraintType.RAMP_RATE:
+                unevaluated.append(
+                    UnevaluatedConstraint(
+                        constraint_id=constraint.id,
+                        object_id=constraint.object_id,
+                        variable=constraint.variable,
+                        reason="ramp-rate constraints are not evaluated",
+                    )
+                )
+                continue
+
+            matching_states = sorted(
+                by_object_variable.get((constraint.object_id, constraint.variable), []),
+                key=lambda state: state.timestamp_minutes,
+            )
+            if not matching_states:
+                unevaluated.append(
+                    UnevaluatedConstraint(
+                        constraint_id=constraint.id,
+                        object_id=constraint.object_id,
+                        variable=constraint.variable,
+                        reason="scenario has no matching state variable",
+                    )
+                )
+                continue
+
+            for state in matching_states:
+                if state.unit != constraint.unit:
+                    raise ValueError(
+                        f"constraint unit {constraint.unit} does not match scenario unit {state.unit} "
+                        f"for {constraint.id}"
+                    )
+
+            for state in matching_states:
+                if _constraint_is_violated(constraint, state.value):
+                    violations.append(
+                        ConstraintViolation(
+                            constraint_id=constraint.id,
+                            object_id=constraint.object_id,
+                            variable=constraint.variable,
+                            timestamp_minutes=state.timestamp_minutes,
+                            value=state.value,
+                            unit=state.unit,
+                            constraint_type=constraint.constraint_type,
+                            min_value=constraint.min_value,
+                            max_value=constraint.max_value,
+                            source=constraint.source,
+                        )
+                    )
+
+    return violations, unevaluated
 
 
 def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest) -> ReleaseScenarioResponse:
@@ -260,4 +376,10 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
                 )
             )
 
-    return ReleaseScenarioResponse(scenario_id="scenario-release", states=states)
+    violations, unevaluated_constraints = _evaluate_constraints(repo, states)
+    return ReleaseScenarioResponse(
+        scenario_id="scenario-release",
+        states=states,
+        violations=violations,
+        unevaluated_constraints=unevaluated_constraints,
+    )
