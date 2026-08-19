@@ -214,64 +214,105 @@ def test_list_objects_tool_paginates_deterministically_and_bounds_limit():
     assert beyond.result == {"offset": 10, "limit": 2, "total": 3, "items": []}
 
     with pytest.raises(ValidationError):
-        execute_tool(
-            repo,
-            HydroToolRequest(name="list_objects", arguments={"limit": 101}),
-        )
+        execute_tool(repo, HydroToolRequest(name="list_objects", arguments={"limit": 101}))
+    with pytest.raises(ValidationError):
+        execute_tool(repo, HydroToolRequest(name="list_objects", arguments={"object_type": "not-a-real-object-type"}))
+
+
+def branching_trace_repo() -> ToolRepository:
+    repo = ToolRepository()
+    repo.relations = [
+        HydroRelation(id="a-c", source_id="reach-a", target_id="reach-c", relation_type=RelationType.FLOWS_TO),
+        HydroRelation(id="a-b", source_id="reach-a", target_id="reach-b", relation_type=RelationType.FLOWS_TO),
+        HydroRelation(id="b-e", source_id="reach-b", target_id="reach-e", relation_type=RelationType.FLOWS_TO),
+        HydroRelation(id="b-d", source_id="reach-b", target_id="reach-d", relation_type=RelationType.FLOWS_TO),
+        HydroRelation(id="c-f", source_id="reach-c", target_id="reach-f", relation_type=RelationType.FLOWS_TO),
+    ]
+    return repo
+
+
+def test_trace_downstream_tool_returns_bounded_bfs_page_with_lookahead():
+    repo = branching_trace_repo()
+
+    first = execute_tool(
+        repo,
+        HydroToolRequest(
+            name="trace_downstream",
+            arguments={"object_id": "reach-a", "max_hops": 3, "offset": 0, "limit": 2},
+        ),
+    )
+    second = execute_tool(
+        repo,
+        HydroToolRequest(
+            name="trace_downstream",
+            arguments={"object_id": "reach-a", "max_hops": 3, "offset": 2, "limit": 2},
+        ),
+    )
+
+    assert first.result == {
+        "offset": 0,
+        "limit": 2,
+        "has_more": True,
+        "items": [
+            {"object_id": "reach-b", "hop": 1, "via_relation": "FLOWS_TO"},
+            {"object_id": "reach-c", "hop": 1, "via_relation": "FLOWS_TO"},
+        ],
+    }
+    assert second.result == {
+        "offset": 2,
+        "limit": 2,
+        "has_more": True,
+        "items": [
+            {"object_id": "reach-d", "hop": 2, "via_relation": "FLOWS_TO"},
+            {"object_id": "reach-e", "hop": 2, "via_relation": "FLOWS_TO"},
+        ],
+    }
+
+
+def test_trace_downstream_tool_final_and_beyond_pages_report_no_more():
+    repo = branching_trace_repo()
+
+    final_page = execute_tool(
+        repo,
+        HydroToolRequest(
+            name="trace_downstream",
+            arguments={"object_id": "reach-a", "max_hops": 3, "offset": 4, "limit": 2},
+        ),
+    )
+    beyond = execute_tool(
+        repo,
+        HydroToolRequest(
+            name="trace_downstream",
+            arguments={"object_id": "reach-a", "max_hops": 3, "offset": 20, "limit": 2},
+        ),
+    )
+
+    assert final_page.result == {
+        "offset": 4,
+        "limit": 2,
+        "has_more": False,
+        "items": [{"object_id": "reach-f", "hop": 2, "via_relation": "FLOWS_TO"}],
+    }
+    assert beyond.result == {"offset": 20, "limit": 2, "has_more": False, "items": []}
 
     with pytest.raises(ValidationError):
         execute_tool(
             repo,
-            HydroToolRequest(name="list_objects", arguments={"object_type": "not-a-real-object-type"}),
+            HydroToolRequest(name="trace_downstream", arguments={"object_id": "reach-a", "limit": 201}),
         )
-
-
-def test_trace_downstream_tool_respects_hop_limit():
-    result = execute_tool(
-        ToolRepository(),
-        HydroToolRequest(name="trace_downstream", arguments={"object_id": "reach-a", "max_hops": 1}),
-    )
-
-    assert result.result == [{"object_id": "reach-b", "hop": 1, "via_relation": "FLOWS_TO"}]
 
 
 def test_list_curves_tool_returns_compact_paged_catalog_with_typed_filter():
     repo = ToolRepository()
-
-    all_curves = execute_tool(
-        repo,
-        HydroToolRequest(name="list_curves", arguments={"object_id": "reservoir-alpha"}),
-    )
-    storage = execute_tool(
-        repo,
-        HydroToolRequest(
-            name="list_curves",
-            arguments={"object_id": "reservoir-alpha", "curve_type": "level_storage"},
-        ),
-    )
+    all_curves = execute_tool(repo, HydroToolRequest(name="list_curves", arguments={"object_id": "reservoir-alpha"}))
+    storage = execute_tool(repo, HydroToolRequest(name="list_curves", arguments={"object_id": "reservoir-alpha", "curve_type": "level_storage"}))
 
     assert all_curves.result["offset"] == 0
     assert all_curves.result["limit"] == 20
     assert all_curves.result["total"] == 2
     assert all_curves.result["items"] == [
-        {
-            "id": "curve-area",
-            "object_id": "reservoir-alpha",
-            "curve_type": "level_area",
-            "x_unit": "m",
-            "y_unit": "m2",
-            "point_count": 3,
-            "source": "test-area-source",
-        },
-        {
-            "id": "curve-storage",
-            "object_id": "reservoir-alpha",
-            "curve_type": "level_storage",
-            "x_unit": "m",
-            "y_unit": "m3",
-            "point_count": 2,
-            "source": "test-storage-source",
-        },
+        {"id": "curve-area", "object_id": "reservoir-alpha", "curve_type": "level_area", "x_unit": "m", "y_unit": "m2", "point_count": 3, "source": "test-area-source"},
+        {"id": "curve-storage", "object_id": "reservoir-alpha", "curve_type": "level_storage", "x_unit": "m", "y_unit": "m3", "point_count": 2, "source": "test-storage-source"},
     ]
     assert all("points" not in item for item in all_curves.result["items"])
     assert storage.result["total"] == 1
@@ -280,21 +321,8 @@ def test_list_curves_tool_returns_compact_paged_catalog_with_typed_filter():
 
 def test_list_curves_tool_paginates_and_bounds_limit():
     repo = ToolRepository()
-
-    page = execute_tool(
-        repo,
-        HydroToolRequest(
-            name="list_curves",
-            arguments={"object_id": "reservoir-alpha", "offset": 1, "limit": 1},
-        ),
-    )
-    beyond = execute_tool(
-        repo,
-        HydroToolRequest(
-            name="list_curves",
-            arguments={"object_id": "reservoir-alpha", "offset": 10, "limit": 2},
-        ),
-    )
+    page = execute_tool(repo, HydroToolRequest(name="list_curves", arguments={"object_id": "reservoir-alpha", "offset": 1, "limit": 1}))
+    beyond = execute_tool(repo, HydroToolRequest(name="list_curves", arguments={"object_id": "reservoir-alpha", "offset": 10, "limit": 2}))
 
     assert page.result["offset"] == 1
     assert page.result["limit"] == 1
@@ -303,41 +331,19 @@ def test_list_curves_tool_paginates_and_bounds_limit():
     assert beyond.result == {"offset": 10, "limit": 2, "total": 2, "items": []}
 
     with pytest.raises(ValidationError):
-        execute_tool(
-            repo,
-            HydroToolRequest(
-                name="list_curves",
-                arguments={"object_id": "reservoir-alpha", "limit": 51},
-            ),
-        )
+        execute_tool(repo, HydroToolRequest(name="list_curves", arguments={"object_id": "reservoir-alpha", "limit": 51}))
 
 
 def test_list_constraints_tool_returns_paged_full_semantics_with_variable_filter():
     repo = ToolRepository()
-
-    all_constraints = execute_tool(
-        repo,
-        HydroToolRequest(name="list_constraints", arguments={"object_id": "reservoir-alpha"}),
-    )
-    levels = execute_tool(
-        repo,
-        HydroToolRequest(
-            name="list_constraints",
-            arguments={"object_id": "reservoir-alpha", "variable": "level"},
-        ),
-    )
+    all_constraints = execute_tool(repo, HydroToolRequest(name="list_constraints", arguments={"object_id": "reservoir-alpha"}))
+    levels = execute_tool(repo, HydroToolRequest(name="list_constraints", arguments={"object_id": "reservoir-alpha", "variable": "level"}))
 
     assert all_constraints.result["offset"] == 0
     assert all_constraints.result["limit"] == 50
     assert all_constraints.result["total"] == 3
-    assert [item["id"] for item in all_constraints.result["items"]] == [
-        "constraint-level-range",
-        "constraint-max-release",
-        "constraint-min-level",
-    ]
-
-    range_constraint = all_constraints.result["items"][0]
-    assert range_constraint == {
+    assert [item["id"] for item in all_constraints.result["items"]] == ["constraint-level-range", "constraint-max-release", "constraint-min-level"]
+    assert all_constraints.result["items"][0] == {
         "id": "constraint-level-range",
         "object_id": "reservoir-alpha",
         "variable": "level",
@@ -348,31 +354,14 @@ def test_list_constraints_tool_returns_paged_full_semantics_with_variable_filter
         "active_when": {"season": "flood"},
         "source": "test-rulebook-range",
     }
-
     assert levels.result["total"] == 2
-    assert [item["id"] for item in levels.result["items"]] == [
-        "constraint-level-range",
-        "constraint-min-level",
-    ]
+    assert [item["id"] for item in levels.result["items"]] == ["constraint-level-range", "constraint-min-level"]
 
 
 def test_list_constraints_tool_paginates_and_bounds_limit():
     repo = ToolRepository()
-
-    page = execute_tool(
-        repo,
-        HydroToolRequest(
-            name="list_constraints",
-            arguments={"object_id": "reservoir-alpha", "offset": 1, "limit": 1},
-        ),
-    )
-    beyond = execute_tool(
-        repo,
-        HydroToolRequest(
-            name="list_constraints",
-            arguments={"object_id": "reservoir-alpha", "offset": 10, "limit": 2},
-        ),
-    )
+    page = execute_tool(repo, HydroToolRequest(name="list_constraints", arguments={"object_id": "reservoir-alpha", "offset": 1, "limit": 1}))
+    beyond = execute_tool(repo, HydroToolRequest(name="list_constraints", arguments={"object_id": "reservoir-alpha", "offset": 10, "limit": 2}))
 
     assert page.result["offset"] == 1
     assert page.result["limit"] == 1
@@ -381,26 +370,18 @@ def test_list_constraints_tool_paginates_and_bounds_limit():
     assert beyond.result == {"offset": 10, "limit": 2, "total": 3, "items": []}
 
     with pytest.raises(ValidationError):
-        execute_tool(
-            repo,
-            HydroToolRequest(
-                name="list_constraints",
-                arguments={"object_id": "reservoir-alpha", "limit": 101},
-            ),
-        )
+        execute_tool(repo, HydroToolRequest(name="list_constraints", arguments={"object_id": "reservoir-alpha", "limit": 101}))
 
 
 def test_unknown_tool_and_invalid_arguments_fail_explicitly():
     with pytest.raises(ValueError, match="unknown hydro tool"):
         execute_tool(ToolRepository(), HydroToolRequest(name="delete_everything", arguments={}))
-
     with pytest.raises(ValidationError):
         execute_tool(ToolRepository(), HydroToolRequest(name="get_object", arguments={}))
 
 
 def test_object_specific_read_tools_raise_key_error_for_missing_object():
     repo = ToolRepository()
-
     for name, arguments in [
         ("get_object", {"object_id": "missing"}),
         ("trace_downstream", {"object_id": "missing"}),
