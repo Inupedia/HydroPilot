@@ -133,6 +133,7 @@ export interface ReservoirRainfallForecastRequest {
   reservoir_id: string
   rainfall: RainfallForecastPoint[]
   dt_minutes?: number
+  routing_horizon_minutes?: number
   initial_inflow_cms: number
   release_cms: number
   release_response_fraction?: number
