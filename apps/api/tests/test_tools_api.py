@@ -47,9 +47,9 @@ def test_tool_execution_lists_compact_real_demo_reservoir_inventory():
     assert result["items"] == [
         {
             "id": "reservoir-shasta",
-            "name": "Shasta Lake",
+            "name": "Shasta Reservoir Demo Object",
             "object_type": "reservoir",
-            "source": "USBR/RIS/OSM/NWPS",
+            "source": "USACE NID-derived fixture",
         }
     ]
     assert "geometry" not in result["items"][0]
