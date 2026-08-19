@@ -72,6 +72,12 @@ class ToolRepository:
             )
         ]
 
+    def list_objects(self, object_type: ObjectType | None = None):
+        values = list(self.objects.values())
+        if object_type is not None:
+            values = [item for item in values if item.object_type is object_type]
+        return sorted(values, key=lambda item: item.id)
+
     def get_object(self, object_id):
         return self.objects.get(object_id)
 
@@ -95,13 +101,14 @@ class ToolRepository:
         return values
 
 
-def test_catalog_contains_only_initial_read_only_tools_with_json_schemas():
+def test_catalog_contains_only_read_only_tools_with_json_schemas():
     catalog = tool_catalog()
 
     assert [item.name for item in catalog] == [
         "get_object",
         "list_constraints",
         "list_curves",
+        "list_objects",
         "trace_downstream",
     ]
     assert all(item.read_only is True for item in catalog)
@@ -118,6 +125,26 @@ def test_get_object_tool_returns_json_serializable_domain_data():
     assert result.name == "get_object"
     assert result.result["id"] == "reservoir-alpha"
     assert result.result["object_type"] == "reservoir"
+
+
+def test_list_objects_tool_supports_all_objects_and_typed_filter():
+    repo = ToolRepository()
+
+    all_objects = execute_tool(repo, HydroToolRequest(name="list_objects", arguments={}))
+    reaches = execute_tool(
+        repo,
+        HydroToolRequest(name="list_objects", arguments={"object_type": "river_reach"}),
+    )
+
+    assert [item["id"] for item in all_objects.result] == ["reach-a", "reach-b", "reservoir-alpha"]
+    assert [item["id"] for item in reaches.result] == ["reach-a", "reach-b"]
+    assert all(item["object_type"] == "river_reach" for item in reaches.result)
+
+    with pytest.raises(ValidationError):
+        execute_tool(
+            repo,
+            HydroToolRequest(name="list_objects", arguments={"object_type": "not-a-real-object-type"}),
+        )
 
 
 def test_trace_downstream_tool_respects_hop_limit():
@@ -161,7 +188,7 @@ def test_unknown_tool_and_invalid_arguments_fail_explicitly():
         execute_tool(ToolRepository(), HydroToolRequest(name="get_object", arguments={}))
 
 
-def test_read_tools_raise_key_error_for_missing_object():
+def test_object_specific_read_tools_raise_key_error_for_missing_object():
     repo = ToolRepository()
 
     for name, arguments in [
