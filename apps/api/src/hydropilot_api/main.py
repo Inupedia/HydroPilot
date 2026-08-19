@@ -1,7 +1,14 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from hydropilot_api.config import get_settings
-from hydropilot_api.domain import CurveType, HydroCurve, HydroObject, NetworkPathItem, ObjectType
+from hydropilot_api.domain import (
+    CurveType,
+    HydroConstraint,
+    HydroCurve,
+    HydroObject,
+    NetworkPathItem,
+    ObjectType,
+)
 from hydropilot_api.llm import ChatRequest, ChatResponse, LLMProviderError, ProviderSummary, chat_completion, provider_catalog
 from hydropilot_api.repositories.fixture import get_fixture_repository
 from hydropilot_api.services.scenario import ReleaseScenarioRequest, ReleaseScenarioResponse, run_release_scenario
@@ -54,6 +61,17 @@ def list_object_curves(
     if repository.get_object(object_id) is None:
         raise HTTPException(status_code=404, detail="object not found")
     return repository.list_curves(object_id=object_id, curve_type=curve_type)
+
+
+@app.get("/api/objects/{object_id}/constraints", response_model=list[HydroConstraint])
+def list_object_constraints(
+    object_id: str,
+    variable: str | None = Query(default=None),
+) -> list[HydroConstraint]:
+    repository = repo()
+    if repository.get_object(object_id) is None:
+        raise HTTPException(status_code=404, detail="object not found")
+    return repository.list_constraints(object_id=object_id, variable=variable)
 
 
 @app.get("/api/network/{object_id}/downstream", response_model=list[NetworkPathItem])
