@@ -109,6 +109,7 @@ def test_agent_returns_text_without_tool_execution_and_advertises_only_fixed_rea
         "get_object",
         "list_constraints",
         "list_curves",
+        "list_objects",
         "trace_downstream",
     ]
     assert captured[0]["messages"][0]["role"] == "system"
