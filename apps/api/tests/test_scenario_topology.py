@@ -25,6 +25,9 @@ class MemoryHydroRepository:
     def list_curves(self, object_id=None, curve_type=None):
         return []
 
+    def list_constraints(self, object_id=None, variable=None):
+        return []
+
 
 def reservoir() -> HydroObject:
     return HydroObject(
