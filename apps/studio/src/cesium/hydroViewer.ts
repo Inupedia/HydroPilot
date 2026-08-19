@@ -16,7 +16,14 @@ import {
   buildModuleUrl,
 } from 'cesium'
 import type { HydroObject, HydroState } from '../types'
-import { flowSceneVisual, stateValueAt, storageSceneVisual, type FlowSeverity } from './forecastScene'
+import {
+  controlRiskVisual,
+  flowSceneVisual,
+  stateValueAt,
+  storageSceneVisual,
+  type ControlRisk,
+  type FlowSeverity,
+} from './forecastScene'
 
 const COLORS = {
   river: Color.fromCssColorString('#36c9f5'),
@@ -25,6 +32,9 @@ const COLORS = {
   dam: Color.fromCssColorString('#ffc857'),
   gauge: Color.fromCssColorString('#4ef0b7'),
   control: Color.fromCssColorString('#ff6b6b'),
+  controlNormal: Color.fromCssColorString('#50edb6'),
+  controlWarning: Color.fromCssColorString('#ffd166'),
+  controlFlood: Color.fromCssColorString('#ff5d5d'),
   label: Color.fromCssColorString('#eafaff'),
   labelBackground: Color.fromCssColorString('#061522').withAlpha(0.82),
 }
@@ -55,6 +65,12 @@ function flowColor(severity: FlowSeverity): Color {
   if (severity === 'high') return Color.fromCssColorString('#ffb84d')
   if (severity === 'elevated') return Color.fromCssColorString('#42ddff')
   return COLORS.river
+}
+
+function controlColor(risk: ControlRisk): Color {
+  if (risk === 'flood') return COLORS.controlFlood
+  if (risk === 'warning') return COLORS.controlWarning
+  return COLORS.controlNormal
 }
 
 function finiteProperty(value: unknown): number | null {
@@ -169,21 +185,33 @@ export function renderHydroScene(
     if (!coordinates) continue
     const [longitude, latitude] = coordinates
     const highlighted = highlightedIds.has(object.id)
-    const color = object.object_type === 'dam'
-      ? COLORS.dam
-      : object.object_type === 'gauge'
-        ? COLORS.gauge
-        : object.object_type === 'control_point'
-          ? COLORS.control
-          : COLORS.reservoir
-    const size = object.object_type === 'reservoir' ? 16 : highlighted ? 17 : 13
     const storage = object.object_type === 'reservoir' ? stateValueAt(states, object.id, 'storage', timestamp) : null
     const inflow = object.object_type === 'reservoir' ? stateValueAt(states, object.id, 'inflow', timestamp) : null
     const release = object.object_type === 'reservoir' ? stateValueAt(states, object.id, 'release', timestamp) : null
     const maxStorage = object.object_type === 'reservoir' ? finiteProperty(object.properties.max_storage_m3) : null
     const storageVisual = storageSceneVisual(storage, maxStorage)
+    const controlFlow = object.object_type === 'control_point' ? stateValueAt(states, object.id, 'flow', timestamp) : null
+    const warningFlow = object.object_type === 'control_point' ? finiteProperty(object.properties.warning_flow_cms) : null
+    const floodFlow = object.object_type === 'control_point' ? finiteProperty(object.properties.flood_flow_cms) : null
+    const controlVisual = controlRiskVisual(controlFlow, warningFlow, floodFlow)
+    const dynamicControlColor = controlColor(controlVisual.risk)
+    const color = object.object_type === 'dam'
+      ? COLORS.dam
+      : object.object_type === 'gauge'
+        ? COLORS.gauge
+        : object.object_type === 'control_point'
+          ? (controlFlow == null ? COLORS.control : dynamicControlColor)
+          : COLORS.reservoir
+    const size = object.object_type === 'reservoir'
+      ? 16
+      : object.object_type === 'control_point' && controlFlow != null
+        ? 14 * controlVisual.scale
+        : highlighted ? 17 : 13
     const reservoirDescription = storage != null
       ? `<b>${object.name}</b><br/>T+${timestamp} min<br/>Storage: ${(storage / 1e9).toFixed(3)} B m³${maxStorage ? `<br/>Capacity: ${(storageVisual.ratio * 100).toFixed(1)}%` : ''}${inflow != null ? `<br/>Inflow: ${inflow.toFixed(0)} m³/s` : ''}${release != null ? `<br/>Release: ${release.toFixed(0)} m³/s` : ''}`
+      : `<b>${object.name}</b><br/>Type: ${object.object_type}<br/>Source: public demo fixture`
+    const controlDescription = controlFlow != null
+      ? `<b>${object.name}</b><br/>T+${timestamp} min<br/>Forecast control flow: ${controlFlow.toFixed(0)} m³/s<br/>Risk: ${controlVisual.risk.toUpperCase()}${warningFlow != null ? `<br/>Warning: ${warningFlow.toFixed(0)} m³/s` : ''}${floodFlow != null ? `<br/>Flood: ${floodFlow.toFixed(0)} m³/s` : ''}`
       : `<b>${object.name}</b><br/>Type: ${object.object_type}<br/>Source: public demo fixture`
 
     viewer.entities.add({
@@ -191,7 +219,9 @@ export function renderHydroScene(
       name: object.name,
       description: object.object_type === 'reservoir'
         ? reservoirDescription
-        : `<b>${object.name}</b><br/>Type: ${object.object_type}<br/>Source: public demo fixture`,
+        : object.object_type === 'control_point'
+          ? controlDescription
+          : `<b>${object.name}</b><br/>Type: ${object.object_type}<br/>Source: public demo fixture`,
       position: Cartesian3.fromDegrees(longitude, latitude, object.object_type === 'dam' ? 550 : 350),
       point: {
         pixelSize: size,
@@ -210,7 +240,9 @@ export function renderHydroScene(
         outlineWidth: 2,
         style: LabelStyle.FILL_AND_OUTLINE,
         showBackground: true,
-        backgroundColor: COLORS.labelBackground,
+        backgroundColor: object.object_type === 'control_point' && controlFlow != null
+          ? dynamicControlColor.withAlpha(0.72)
+          : COLORS.labelBackground,
         backgroundPadding: new Cartesian2(8, 5),
         horizontalOrigin: HorizontalOrigin.LEFT,
         verticalOrigin: VerticalOrigin.CENTER,
@@ -224,6 +256,13 @@ export function renderHydroScene(
         material: COLORS.reservoir.withAlpha(storage == null ? 0.34 : 0.24 + storageVisual.ratio * 0.2),
         outline: true,
         outlineColor: COLORS.reservoir.withAlpha(0.9),
+        height: 0,
+      } : object.object_type === 'control_point' && controlFlow != null ? {
+        semiMajorAxis: controlVisual.pulseRadiusM,
+        semiMinorAxis: controlVisual.pulseRadiusM,
+        material: dynamicControlColor.withAlpha(controlVisual.risk === 'normal' ? 0.08 : 0.16),
+        outline: true,
+        outlineColor: dynamicControlColor.withAlpha(0.82),
         height: 0,
       } : undefined,
     })
@@ -242,6 +281,24 @@ export function renderHydroScene(
           outline: true,
           outlineColor: COLORS.reservoir.withAlpha(0.72),
           numberOfVerticalLines: 12,
+        },
+      })
+    }
+
+    if (object.object_type === 'control_point' && controlFlow != null) {
+      viewer.entities.add({
+        id: `${object.id}-risk-beacon`,
+        name: `${object.name} forecast risk beacon`,
+        description: controlDescription,
+        position: Cartesian3.fromDegrees(longitude, latitude, controlVisual.beaconHeightM / 2),
+        cylinder: {
+          length: controlVisual.beaconHeightM,
+          topRadius: 1_300 * controlVisual.scale,
+          bottomRadius: 2_600 * controlVisual.scale,
+          material: dynamicControlColor.withAlpha(controlVisual.risk === 'normal' ? 0.2 : 0.36),
+          outline: true,
+          outlineColor: dynamicControlColor.withAlpha(0.95),
+          numberOfVerticalLines: 10,
         },
       })
     }
