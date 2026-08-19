@@ -63,6 +63,38 @@ export interface ScenarioHydrographPoint {
   timestamp_minutes: number
   flow_cms: number
 }
+export interface FlowObservation {
+  timestamp_minutes: number
+  flow_cms: number
+}
+export interface FlowForecastPoint {
+  timestamp_minutes: number
+  flow_cms: number
+}
+export interface FlowForecastSummary {
+  current_flow_cms: number
+  peak_flow_cms: number
+  peak_timestamp_minutes: number
+  peak_change_pct: number | null
+  trend: 'rising' | 'falling' | 'steady'
+}
+export interface FlowForecastRequest {
+  object_id: string
+  history: FlowObservation[]
+  horizon_minutes?: number
+  dt_minutes?: number
+  model?: 'persistence' | 'damped_trend'
+  trend_window_points?: number
+  damping?: number
+}
+export interface FlowForecastResponse {
+  object_id: string
+  model: 'persistence' | 'damped_trend'
+  horizon_minutes: number
+  dt_minutes: number
+  forecast: FlowForecastPoint[]
+  summary: FlowForecastSummary
+}
 
 function inTauri(): boolean {
   return Boolean(window.__TAURI_INTERNALS__)
@@ -134,6 +166,7 @@ export const hydroApi = {
     })
     return result.states
   },
+  flowForecast: (request: FlowForecastRequest) => postJson<FlowForecastResponse>('/api/forecasts/flow', request),
   llmProviders: () => getJson<LlmProviderSummary[]>('/api/llm/providers'),
   llmChat: (request: LlmChatRequest) => postJson<LlmChatResponse>('/api/llm/chat', request),
   agentChat: (request: AgentChatRequest) => postJson<AgentChatResponse>('/api/agent/chat', request),
