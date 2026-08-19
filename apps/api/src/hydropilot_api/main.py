@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
+from hydropilot_api.agent import ReadOnlyAgentRequest, ReadOnlyAgentResponse, run_read_only_agent
 from hydropilot_api.config import get_settings
 from hydropilot_api.domain import (
     CurveType,
@@ -113,6 +114,20 @@ def release_scenario(request: ReleaseScenarioRequest) -> ReleaseScenarioResponse
         raise HTTPException(status_code=404, detail=f"object not found: {exc.args[0]}") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/agent/chat", response_model=ReadOnlyAgentResponse)
+def agent_chat(request: ReadOnlyAgentRequest) -> ReadOnlyAgentResponse:
+    try:
+        return run_read_only_agent(repo(), request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"object not found: {exc.args[0]}") from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LLMProviderError as exc:
+        detail = str(exc)
+        status_code = 400 if "required" in detail else 502
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @app.get("/api/llm/providers", response_model=list[ProviderSummary])
