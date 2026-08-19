@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Entity, Viewer } from 'cesium'
 import Timeline from './components/Timeline'
-import { hydroApi, waitForApi, type AgentChatMessage, type LlmProviderSummary } from './api/client'
+import { hydroApi, waitForApi, type LlmProviderSummary } from './api/client'
 import { createHydroViewer, renderHydroScene } from './cesium/hydroViewer'
-import { agentCompatibleProviders, buildReadOnlyAgentMessages } from './copilot/agent'
+import {
+  agentCompatibleProviders,
+  buildReadOnlyAgentMessages,
+  formatToolExecutionLabel,
+  type StudioCopilotMessage,
+} from './copilot/agent'
+import './copilot/grounding.css'
 import { secrets } from './platform/secrets'
 import type { HydroObject, HydroState } from './types'
 
@@ -36,7 +42,7 @@ export default function App() {
   const [secretState, setSecretState] = useState('')
   const [copilotPrompt, setCopilotPrompt] = useState('')
   const [copilotBusy, setCopilotBusy] = useState(false)
-  const [copilotMessages, setCopilotMessages] = useState<AgentChatMessage[]>([
+  const [copilotMessages, setCopilotMessages] = useState<StudioCopilotMessage[]>([
     { role: 'assistant', content: 'Ask about objects, downstream topology, curves, or constraints. Highlighting and scenario execution remain explicit controls below.' },
   ])
 
@@ -158,8 +164,12 @@ export default function App() {
       }
     } catch (error) { setSecretState(`Could not save key: ${error instanceof Error ? error.message : String(error)}`) }
   }
-  function addMessage(role: 'user' | 'assistant', content: string) {
-    setCopilotMessages((current) => [...current, { role, content }].slice(-8))
+  function addMessage(
+    role: 'user' | 'assistant',
+    content: string,
+    metadata: Partial<Pick<StudioCopilotMessage, 'toolExecutions' | 'providerRounds'>> = {},
+  ) {
+    setCopilotMessages((current) => [...current, { role, content, ...metadata }].slice(-8))
   }
   async function submitCopilot(text = copilotPrompt) {
     const prompt = text.trim()
@@ -189,7 +199,10 @@ export default function App() {
         max_tokens: 1200,
         max_tool_rounds: 4,
       })
-      addMessage('assistant', response.text)
+      addMessage('assistant', response.text, {
+        toolExecutions: response.tool_executions,
+        providerRounds: response.provider_rounds,
+      })
     } catch (error) { addMessage('assistant', `Request failed: ${error instanceof Error ? error.message : String(error)}`) }
     finally { setCopilotBusy(false) }
   }
@@ -206,7 +219,7 @@ export default function App() {
         <section className="copilot-card" data-testid="copilot-panel">
           <div className="section-heading-row"><div><span className="section-kicker">AI COPILOT</span><h2>Ask the water network</h2></div><span className={`provider-badge ${providerReady ? 'ready' : ''}`}>{providerReady ? activeProvider?.name || 'Ready' : 'Model setup'}</span></div>
           <div className="quick-prompts">{examples.map((example) => <button key={example} type="button" onClick={() => void submitCopilot(example)}>{example}</button>)}</div>
-          <div className="copilot-thread" aria-live="polite">{copilotMessages.slice(-4).map((message, index) => <div key={index} className={`copilot-message ${message.role}`}><span>{message.role === 'assistant' ? 'HP' : 'YOU'}</span><p>{message.content}</p></div>)}</div>
+          <div className="copilot-thread" aria-live="polite">{copilotMessages.slice(-4).map((message, index) => <div key={index} className={`copilot-message ${message.role}`}><span>{message.role === 'assistant' ? 'HP' : 'YOU'}</span><div className="copilot-message-content"><p>{message.content}</p>{message.role === 'assistant' && message.toolExecutions?.length ? <div className="agent-grounding"><div className="agent-grounding-header"><span>Grounded by</span>{message.providerRounds ? <small>{message.providerRounds} model rounds</small> : null}</div><div className="agent-grounding-tools">{message.toolExecutions.map((execution) => <code key={execution.call_id} title={formatToolExecutionLabel(execution)}>{formatToolExecutionLabel(execution)}</code>)}</div></div> : null}</div></div>)}</div>
           <form className="copilot-compose" onSubmit={(event) => { event.preventDefault(); void submitCopilot() }}><textarea rows={2} value={copilotPrompt} onChange={(event) => setCopilotPrompt(event.target.value)} placeholder="例如：reach-001 下游有哪些对象？或 reservoir-shasta 有哪些运行约束？"/><button className="send-button" type="submit" disabled={copilotBusy || !copilotPrompt.trim()}>{copilotBusy ? 'Working…' : 'Send'}</button></form>
           <button className="settings-toggle" type="button" onClick={() => setProviderSettingsOpen((value) => !value)}>{providerSettingsOpen ? 'Hide model settings' : 'Model settings'}</button>
           {providerSettingsOpen && <div className="provider-settings">

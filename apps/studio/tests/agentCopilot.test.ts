@@ -3,12 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   hydroApi,
   type AgentChatRequest,
+  type AgentToolExecution,
   type LlmProviderSummary,
 } from '../src/api/client'
 import {
   agentCompatibleProviders,
   buildReadOnlyAgentMessages,
+  formatToolExecutionLabel,
   type StudioAgentContext,
+  type StudioCopilotMessage,
 } from '../src/copilot/agent'
 
 const providers: LlmProviderSummary[] = [
@@ -85,6 +88,74 @@ describe('read-only Studio Agent', () => {
     expect(messages.at(-1)?.content).toContain('1875 m3/s')
     expect(messages.at(-1)?.content).toContain('Scenario controls are UI-only and are not available as Agent tools.')
     expect(messages.at(-1)?.content).toContain('User question: What constraints are configured?')
+  })
+
+  it('strips display-only grounding metadata before sending conversation history', () => {
+    const history: StudioCopilotMessage[] = [
+      {
+        role: 'assistant',
+        content: 'I found the reservoir.',
+        toolExecutions: [
+          {
+            call_id: 'call_1',
+            name: 'get_object',
+            arguments: { object_id: 'reservoir-shasta' },
+            result: { id: 'reservoir-shasta' },
+          },
+        ],
+        providerRounds: 2,
+      },
+    ]
+
+    const messages = buildReadOnlyAgentMessages(history, 'What next?', context)
+
+    expect(messages[0]).toEqual({
+      role: 'assistant',
+      content: 'I found the reservoir.',
+    })
+    expect(messages[0]).not.toHaveProperty('toolExecutions')
+    expect(messages[0]).not.toHaveProperty('providerRounds')
+  })
+
+  it('formats grounding calls deterministically and compactly', () => {
+    const executions: AgentToolExecution[] = [
+      {
+        call_id: 'call_1',
+        name: 'trace_downstream',
+        arguments: { max_hops: 8, object_id: 'reach-001' },
+        result: [],
+      },
+      {
+        call_id: 'call_2',
+        name: 'list_objects',
+        arguments: { filters: ['reservoir', 'dam'], object_type: 'reservoir' },
+        result: [],
+      },
+      {
+        call_id: 'call_3',
+        name: 'list_constraints',
+        arguments: {},
+        result: [],
+      },
+    ]
+
+    expect(executions.map(formatToolExecutionLabel)).toEqual([
+      'trace_downstream · max_hops=8, object_id=reach-001',
+      'list_objects · filters=["reservoir","dam"], object_type=reservoir',
+      'list_constraints',
+    ])
+  })
+
+  it('truncates long grounding argument values', () => {
+    const label = formatToolExecutionLabel({
+      call_id: 'call_long',
+      name: 'get_object',
+      arguments: { object_id: `reservoir-${'x'.repeat(120)}` },
+      result: null,
+    })
+
+    expect(label.length).toBeLessThan(120)
+    expect(label).toContain('…')
   })
 
   it('posts Copilot questions to the Agent endpoint without caller-supplied tools', async () => {
