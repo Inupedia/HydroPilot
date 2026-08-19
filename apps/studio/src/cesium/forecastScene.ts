@@ -1,6 +1,7 @@
 import type { HydroState } from '../types'
 
 export type FlowSeverity = 'normal' | 'elevated' | 'high' | 'extreme'
+export type ControlRisk = 'normal' | 'warning' | 'flood'
 
 export interface FlowSceneVisual {
   width: number
@@ -13,6 +14,13 @@ export interface StorageSceneVisual {
   ratio: number
   radiusScale: number
   columnHeightM: number
+}
+
+export interface ControlRiskVisual {
+  risk: ControlRisk
+  beaconHeightM: number
+  pulseRadiusM: number
+  scale: number
 }
 
 export function stateValueAt(
@@ -51,4 +59,19 @@ export function storageSceneVisual(storageM3: number | null, maxStorageM3: numbe
     radiusScale: 0.82 + ratio * 0.34,
     columnHeightM: 500 + ratio * 2200,
   }
+}
+
+export function controlRiskVisual(
+  flowCms: number | null,
+  warningFlowCms: number | null,
+  floodFlowCms: number | null,
+): ControlRiskVisual {
+  const flow = Math.max(0, flowCms ?? 0)
+  if (floodFlowCms != null && floodFlowCms > 0 && flow >= floodFlowCms) {
+    return { risk: 'flood', beaconHeightM: 5200, pulseRadiusM: 22_000, scale: 1.45 }
+  }
+  if (warningFlowCms != null && warningFlowCms > 0 && flow >= warningFlowCms) {
+    return { risk: 'warning', beaconHeightM: 3600, pulseRadiusM: 16_000, scale: 1.22 }
+  }
+  return { risk: 'normal', beaconHeightM: 1900, pulseRadiusM: 10_000, scale: 1 }
 }
