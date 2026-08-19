@@ -120,6 +120,7 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
     relations = repo.list_relations()
     release_reach_id = _release_reach_id(request.reservoir_id, relations)
     downstream = downstream_path(release_reach_id, relations, max_hops=request.max_hops)
+    routed_object_ids = [release_reach_id, *[item.object_id for item in downstream]]
     timestamps = list(range(0, request.duration_minutes + request.dt_minutes, request.dt_minutes))
     dt_seconds = request.dt_minutes * 60
     sampled_inflow = [_sample_hydrograph(request.inflow_hydrograph, timestamp) for timestamp in timestamps]
@@ -181,8 +182,8 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
             )
 
     routed_series = list(sampled_release)
-    for item in downstream:
-        params = _routing_parameters(repo, item.object_id, dt_seconds=dt_seconds)
+    for object_id in routed_object_ids:
+        params = _routing_parameters(repo, object_id, dt_seconds=dt_seconds)
         routed_series = route_muskingum(
             routed_series,
             params,
@@ -192,7 +193,7 @@ def run_release_scenario(repo: HydroRepository, request: ReleaseScenarioRequest)
             states.append(
                 HydroState(
                     scenario_id="scenario-release",
-                    object_id=item.object_id,
+                    object_id=object_id,
                     timestamp_minutes=timestamp,
                     variable="flow",
                     value=flow,

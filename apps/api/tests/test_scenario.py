@@ -90,7 +90,7 @@ def constant_boundary(flow_cms: float, duration_minutes: int) -> list[Hydrograph
 
 def release_only_repo() -> MemoryHydroRepository:
     return MemoryHydroRepository(
-        objects=[reservoir(), reach("release-reach")],
+        objects=[reservoir(), reach("release-reach", k_minutes=30, x=0.2)],
         relations=[
             relation(
                 "reservoir-discharge",
@@ -182,24 +182,24 @@ def test_release_scenario_samples_release_and_integrates_both_hydrographs():
     ]
 
 
-def test_release_scenario_routes_release_series_with_steady_start(monkeypatch):
+def test_release_scenario_routes_receiving_reach_before_downstream_reaches(monkeypatch):
     repo = MemoryHydroRepository(
         objects=[
             reservoir(),
-            reach("upstream-release-reach"),
-            reach("routing-reach", k_minutes=47, x=0.31),
+            reach("receiving-reach", k_minutes=31, x=0.2),
+            reach("downstream-reach", k_minutes=47, x=0.31),
         ],
         relations=[
             relation(
                 "reservoir-discharge",
                 "reservoir-alpha",
-                "upstream-release-reach",
+                "receiving-reach",
                 RelationType.DISCHARGES_TO,
             ),
             relation(
                 "network-flow",
-                "upstream-release-reach",
-                "routing-reach",
+                "receiving-reach",
+                "downstream-reach",
                 RelationType.FLOWS_TO,
             ),
         ],
@@ -228,13 +228,20 @@ def test_release_scenario_routes_release_series_with_steady_start(monkeypatch):
     )
 
     flow_objects = {state.object_id for state in result.states if state.variable == "flow"}
-    assert flow_objects == {"routing-reach"}
-    assert len(captured) == 1
-    routed_input, params, initial_outflow = captured[0]
-    assert routed_input == pytest.approx([10, 40, 70])
-    assert initial_outflow == pytest.approx(10)
-    assert params.k_seconds == pytest.approx(47 * 60)
-    assert params.x == pytest.approx(0.31)
+    assert flow_objects == {"receiving-reach", "downstream-reach"}
+    assert len(captured) == 2
+
+    first_input, first_params, first_initial_outflow = captured[0]
+    assert first_input == pytest.approx([10, 40, 70])
+    assert first_initial_outflow == pytest.approx(10)
+    assert first_params.k_seconds == pytest.approx(31 * 60)
+    assert first_params.x == pytest.approx(0.2)
+
+    second_input, second_params, second_initial_outflow = captured[1]
+    assert second_input == pytest.approx([10, 40, 70])
+    assert second_initial_outflow == pytest.approx(10)
+    assert second_params.k_seconds == pytest.approx(47 * 60)
+    assert second_params.x == pytest.approx(0.31)
 
 
 @pytest.mark.parametrize(
@@ -249,7 +256,11 @@ def test_release_scenario_routes_release_series_with_steady_start(monkeypatch):
 )
 def test_release_scenario_requires_exactly_one_discharge_target(relations):
     repo = MemoryHydroRepository(
-        objects=[reservoir(), reach("reach-a"), reach("reach-b")],
+        objects=[
+            reservoir(),
+            reach("reach-a", k_minutes=30, x=0.2),
+            reach("reach-b", k_minutes=30, x=0.2),
+        ],
         relations=relations,
     )
 
@@ -267,17 +278,21 @@ def test_release_scenario_requires_exactly_one_discharge_target(relations):
         )
 
 
-def test_release_scenario_requires_stored_routing_parameters():
+def test_release_scenario_requires_stored_routing_parameters_on_receiving_reach():
     repo = MemoryHydroRepository(
-        objects=[reservoir(), reach("release-reach"), reach("routing-reach", k_minutes=47)],
+        objects=[
+            reservoir(),
+            reach("receiving-reach", k_minutes=47),
+            reach("downstream-reach", k_minutes=50, x=0.2),
+        ],
         relations=[
             relation(
                 "reservoir-discharge",
                 "reservoir-alpha",
-                "release-reach",
+                "receiving-reach",
                 RelationType.DISCHARGES_TO,
             ),
-            relation("network-flow", "release-reach", "routing-reach", RelationType.FLOWS_TO),
+            relation("network-flow", "receiving-reach", "downstream-reach", RelationType.FLOWS_TO),
         ],
     )
 
