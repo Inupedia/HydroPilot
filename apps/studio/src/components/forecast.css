@@ -1,4 +1,4 @@
-.timeline.forecast-timeline{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:stretch;padding:14px 16px 13px;bottom:20px;left:24px;right:24px;background:linear-gradient(180deg,rgba(3,18,31,.94),rgba(2,12,22,.96));border-color:rgba(87,211,248,.32);box-shadow:0 18px 46px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.035)}
+.timeline.forecast-timeline{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;align-items:stretch;padding:13px 16px 12px;bottom:18px;left:24px;right:24px;background:linear-gradient(180deg,rgba(3,18,31,.94),rgba(2,12,22,.96));border-color:rgba(87,211,248,.32);box-shadow:0 18px 46px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.035)}
 .forecast-topline{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .forecast-heading{display:flex;align-items:center;gap:9px;min-width:0}
 .forecast-heading strong{font-size:12px;letter-spacing:.02em}
@@ -6,19 +6,31 @@
 .timeline.forecast-timeline .forecast-badge{display:inline-flex;align-items:center;padding:4px 7px;border-radius:999px;border:1px solid rgba(84,227,184,.28);background:rgba(8,79,61,.38);color:#82f3ce;font-size:8px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}
 .timeline.forecast-timeline .forecast-badge.loading{border-color:rgba(255,206,107,.3);background:rgba(95,63,8,.38);color:#ffd879}
 .forecast-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.forecast-stat{padding:9px 10px;border:1px solid rgba(91,194,229,.16);border-radius:10px;background:rgba(5,28,43,.72)}
+.forecast-stat{padding:8px 10px;border:1px solid rgba(91,194,229,.16);border-radius:10px;background:rgba(5,28,43,.72)}
 .timeline.forecast-timeline .forecast-stat span{display:block;margin-bottom:4px;color:#75a6b7;font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
 .forecast-stat strong{display:block;color:#eefcff;font-size:14px;line-height:1.05}
 .forecast-stat small{display:block;margin-top:3px;color:#72e6c0;font-size:8.5px;font-weight:800}
-.forecast-chart-wrap{position:relative;height:122px;overflow:hidden;border:1px solid rgba(89,184,217,.14);border-radius:10px;background:linear-gradient(180deg,rgba(7,35,51,.58),rgba(3,19,30,.72))}
+.forecast-chart-wrap{position:relative;height:106px;overflow:hidden;border:1px solid rgba(89,184,217,.14);border-radius:10px;background:linear-gradient(180deg,rgba(7,35,51,.58),rgba(3,19,30,.72))}
 .forecast-chart{display:block;width:100%;height:100%}
 .forecast-grid-line{stroke:rgba(139,202,223,.09);stroke-width:1}
 .forecast-observed-line{fill:none;stroke:#4ed8ff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 4px rgba(78,216,255,.4))}
 .forecast-predicted-line{fill:none;stroke:#7cf0bf;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:7 5;filter:drop-shadow(0 0 4px rgba(124,240,191,.28))}
 .forecast-now-line{stroke:#ffd166;stroke-width:1.5;stroke-dasharray:4 4}
 .timeline.forecast-timeline .forecast-now-label{position:absolute;top:7px;transform:translateX(-50%);padding:2px 5px;border-radius:5px;background:rgba(86,57,5,.86);color:#ffd879;font-size:7.5px;font-weight:900;letter-spacing:.1em}
+.rainfall-strip{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:stretch;padding:8px 10px;border:1px solid rgba(86,157,235,.17);border-radius:10px;background:linear-gradient(90deg,rgba(18,43,74,.58),rgba(5,27,43,.62))}
+.rainfall-strip-label,.rainfall-total{display:flex;flex-direction:column;justify-content:center;min-width:82px}
+.rainfall-strip-label strong,.rainfall-total strong{color:#d9efff;font-size:9px}
+.rainfall-strip-label small,.rainfall-total small{margin-top:3px;color:#6f9aaa;font-size:7.5px}
+.rainfall-total{align-items:flex-end;min-width:55px}
+.rainfall-total strong{color:#8fbfff;font-size:12px}
+.rainfall-bars{display:grid;grid-template-columns:repeat(6,minmax(22px,1fr));gap:6px;align-items:end;min-height:46px}
+.rainfall-step{display:grid;grid-template-rows:28px auto auto;gap:1px;align-items:end;text-align:center}
+.rainfall-bar-track{display:flex;align-items:flex-end;justify-content:center;height:28px;border-bottom:1px solid rgba(127,178,231,.15)}
+.rainfall-bar-track i{display:block;width:min(16px,70%);min-height:1px;border-radius:3px 3px 1px 1px;background:linear-gradient(180deg,#93c5ff,#438ad8);box-shadow:0 0 8px rgba(79,144,226,.22)}
+.timeline.forecast-timeline .rainfall-step span{color:#a8cfff;font-size:7.5px;font-weight:800}
+.rainfall-step small{color:#5f8da3;font-size:6.5px}
 .forecast-legend-row{display:flex;align-items:center;justify-content:space-between;gap:14px;color:#7ea9b8;font-size:8.5px}
-.forecast-series-legend{display:flex;align-items:center;gap:12px}
+.forecast-series-legend{display:flex;align-items:center;gap:12px;flex:0 0 auto}
 .timeline.forecast-timeline .forecast-series-legend span{display:inline-flex;align-items:center;gap:5px;color:#91bbc9;font-size:8.5px;font-weight:700}
 .forecast-series-legend i{width:18px;height:2px;border-radius:2px;background:#4ed8ff}
 .forecast-series-legend i.predicted{background:repeating-linear-gradient(90deg,#7cf0bf 0 5px,transparent 5px 8px)}
@@ -28,5 +40,5 @@
 .forecast-refresh{padding:5px 8px;border:1px solid rgba(82,204,241,.24);border-radius:7px;background:rgba(7,49,68,.76);color:#bfeeff;font-size:8.5px;font-weight:800;cursor:pointer}
 .forecast-refresh:disabled{opacity:.5;cursor:progress}
 .forecast-error{padding:10px 12px;border:1px solid rgba(255,105,105,.24);border-radius:9px;background:rgba(78,18,27,.5);color:#ffc1c1;font-size:9px;line-height:1.45}
-.timeline.forecast-timeline .forecast-provenance{max-width:58%;white-space:normal;color:#5f8999;font-size:8px;font-weight:600;line-height:1.35;text-align:right}
-@media(max-width:900px){.forecast-summary-grid{grid-template-columns:1fr 1fr}.forecast-stat:last-child{grid-column:1/-1}.forecast-chart-wrap{height:100px}.forecast-scenario-row{grid-template-columns:1fr}.forecast-refresh{width:100%}.timeline.forecast-timeline .forecast-provenance{max-width:none;text-align:left}}
+.timeline.forecast-timeline .forecast-provenance{max-width:62%;white-space:normal;color:#5f8999;font-size:7.5px;font-weight:600;line-height:1.35;text-align:right}
+@media(max-width:900px){.forecast-summary-grid{grid-template-columns:1fr 1fr}.forecast-stat:last-child{grid-column:1/-1}.forecast-chart-wrap{height:90px}.rainfall-strip{grid-template-columns:1fr}.rainfall-strip-label,.rainfall-total{display:none}.forecast-scenario-row{grid-template-columns:1fr}.forecast-refresh{width:100%}.forecast-legend-row{align-items:flex-start;flex-direction:column}.timeline.forecast-timeline .forecast-provenance{max-width:none;text-align:left}}

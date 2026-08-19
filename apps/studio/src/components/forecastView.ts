@@ -1,4 +1,4 @@
-import type { FlowForecastPoint, FlowObservation } from '../api/client'
+import type { FlowForecastPoint, FlowObservation, RainfallForecastPoint } from '../api/client'
 
 export interface ChartPoint {
   timestamp_minutes: number
@@ -25,6 +25,13 @@ export function demoForecastHistory(currentFlowCms: number): FlowObservation[] {
   ]
 }
 
+export function demoRainfallForecast(): RainfallForecastPoint[] {
+  return [0, 3, 8, 14, 7, 2].map((precipitation_mm, index) => ({
+    timestamp_minutes: (index + 1) * 30,
+    precipitation_mm,
+  }))
+}
+
 export function forecastChartGeometry(
   history: FlowObservation[],
   forecast: FlowForecastPoint[],
@@ -47,7 +54,8 @@ export function forecastChartGeometry(
   const xFor = (minutes: number) => ((minutes - minTime) / timeSpan) * width
   const yFor = (flow: number) => height - ((flow - minFlow) / flowSpan) * height
   const mapPoint = (point: FlowObservation | FlowForecastPoint): ChartPoint => ({
-    ...point,
+    timestamp_minutes: point.timestamp_minutes,
+    flow_cms: point.flow_cms,
     x: xFor(point.timestamp_minutes),
     y: yFor(point.flow_cms),
   })
