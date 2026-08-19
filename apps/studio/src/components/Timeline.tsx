@@ -59,9 +59,9 @@ export default function Timeline({ timestamps, timestamp, onChange }: TimelinePr
     return forecastChartGeometry(history, forecast.runoff, CHART_WIDTH, CHART_HEIGHT)
   }, [forecast, history])
 
-  if (!timestamps.length) return null
-  const min = timestamps[0]
-  const max = timestamps[timestamps.length - 1]
+  const hasScenario = timestamps.length > 0
+  const min = timestamps[0] ?? 0
+  const max = timestamps[timestamps.length - 1] ?? 180
   const step = Math.max(1, timestamps[1] ? timestamps[1] - timestamps[0] : 30)
   const summary = forecast?.summary
   const peakChange = summary?.peak_change_pct == null ? null : `${summary.peak_change_pct >= 0 ? '+' : ''}${summary.peak_change_pct.toFixed(1)}% vs now`
@@ -135,21 +135,30 @@ export default function Timeline({ timestamps, timestamp, onChange }: TimelinePr
         <span className="forecast-provenance">Demo rainfall + uncalibrated basin assumptions ({CATCHMENT_AREA_KM2.toLocaleString()} km² · C={RUNOFF_COEFFICIENT} · K={RESPONSE_TIME_HOURS}h). History is derived from fixture latest flow; not operational data.</span>
       </div>
 
-      <div className="forecast-scenario-row">
-        <span>0D + 1D scenario · t = {timestamp} min</span>
-        <input
-          aria-label="Scenario time"
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={timestamp}
-          onChange={(event) => onChange(Number(event.target.value))}
-        />
-        <button className="forecast-refresh" type="button" disabled={forecastBusy} onClick={() => void loadForecast()}>
-          {forecastBusy ? 'Refreshing…' : 'Refresh runoff forecast'}
-        </button>
-      </div>
+      {hasScenario ? (
+        <div className="forecast-scenario-row">
+          <span>0D + 1D scenario · t = {timestamp} min</span>
+          <input
+            aria-label="Scenario time"
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={timestamp}
+            onChange={(event) => onChange(Number(event.target.value))}
+          />
+          <button className="forecast-refresh" type="button" disabled={forecastBusy} onClick={() => void loadForecast()}>
+            {forecastBusy ? 'Refreshing…' : 'Refresh runoff forecast'}
+          </button>
+        </div>
+      ) : (
+        <div className="forecast-scenario-row scenario-empty">
+          <span>Forecast is live in the demo · run a release scenario to enable 0D + 1D playback.</span>
+          <button className="forecast-refresh" type="button" disabled={forecastBusy} onClick={() => void loadForecast()}>
+            {forecastBusy ? 'Refreshing…' : 'Refresh runoff forecast'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
