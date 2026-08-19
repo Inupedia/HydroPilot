@@ -29,16 +29,31 @@ def test_tool_execution_reads_real_demo_object():
 
     assert response.status_code == 200
     assert response.json()["result"]["id"] == "reservoir-shasta"
+    assert "geometry" in response.json()["result"]
+    assert "properties" in response.json()["result"]
 
 
-def test_tool_execution_lists_real_demo_reservoir_objects():
+def test_tool_execution_lists_compact_real_demo_reservoir_inventory():
     response = client.post(
         "/api/tools/execute",
         json={"name": "list_objects", "arguments": {"object_type": "reservoir"}},
     )
 
     assert response.status_code == 200
-    assert [item["id"] for item in response.json()["result"]] == ["reservoir-shasta"]
+    result = response.json()["result"]
+    assert result["offset"] == 0
+    assert result["limit"] == 50
+    assert result["total"] == 1
+    assert result["items"] == [
+        {
+            "id": "reservoir-shasta",
+            "name": "Shasta Lake",
+            "object_type": "reservoir",
+            "source": "USBR/RIS/OSM/NWPS",
+        }
+    ]
+    assert "geometry" not in result["items"][0]
+    assert "properties" not in result["items"][0]
 
 
 def test_tool_execution_can_read_honest_empty_demo_curves_and_constraints():
