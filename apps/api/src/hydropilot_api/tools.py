@@ -5,7 +5,7 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
-from hydropilot_api.domain import CurveType, ObjectType
+from hydropilot_api.domain import CurveType, HydroConstraint, ObjectType
 from hydropilot_api.repositories.protocols import HydroRepository
 from hydropilot_api.topology import downstream_path
 
@@ -66,6 +66,15 @@ class CurveInventoryPage(BaseModel):
 class ListConstraintsArgs(BaseModel):
     object_id: str = Field(min_length=1)
     variable: str | None = None
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=100)
+
+
+class ConstraintInventoryPage(BaseModel):
+    offset: int
+    limit: int
+    total: int
+    items: list[HydroConstraint]
 
 
 class HydroToolDefinition(BaseModel):
@@ -160,7 +169,14 @@ def _list_curves(repo: HydroRepository, args: BaseModel):
 def _list_constraints(repo: HydroRepository, args: BaseModel):
     values = ListConstraintsArgs.model_validate(args)
     _require_object(repo, values.object_id)
-    return repo.list_constraints(object_id=values.object_id, variable=values.variable)
+    constraints = repo.list_constraints(object_id=values.object_id, variable=values.variable)
+    selected = constraints[values.offset : values.offset + values.limit]
+    return ConstraintInventoryPage(
+        offset=values.offset,
+        limit=values.limit,
+        total=len(constraints),
+        items=selected,
+    )
 
 
 def _jsonable(value: Any) -> Any:
@@ -182,7 +198,7 @@ _REGISTRY: dict[str, _ToolRegistration] = {
         handler=_get_object,
     ),
     "list_constraints": _ToolRegistration(
-        description="List configured operating constraints for one water-network object.",
+        description="List a bounded page of complete configured operating constraints for one water-network object.",
         args_model=ListConstraintsArgs,
         handler=_list_constraints,
     ),

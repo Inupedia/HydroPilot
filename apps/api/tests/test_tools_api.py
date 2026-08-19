@@ -56,7 +56,7 @@ def test_tool_execution_lists_compact_real_demo_reservoir_inventory():
     assert "properties" not in result["items"][0]
 
 
-def test_tool_execution_can_read_honest_empty_demo_curve_catalog_and_constraints():
+def test_tool_execution_can_read_honest_empty_demo_curve_and_constraint_catalogs():
     curves = client.post(
         "/api/tools/execute",
         json={"name": "list_curves", "arguments": {"object_id": "reservoir-shasta"}},
@@ -69,7 +69,7 @@ def test_tool_execution_can_read_honest_empty_demo_curve_catalog_and_constraints
     assert curves.status_code == 200
     assert curves.json()["result"] == {"offset": 0, "limit": 20, "total": 0, "items": []}
     assert constraints.status_code == 200
-    assert constraints.json()["result"] == []
+    assert constraints.json()["result"] == {"offset": 0, "limit": 50, "total": 0, "items": []}
 
 
 def test_tool_execution_maps_missing_object_to_404():
